@@ -6,7 +6,13 @@ import type {
   QueryValue,
 } from '../http/jira-client.ts';
 import { normalizeForSearch } from '../util/normalize.ts';
-import type { ApiFamily, CatalogMeta, Operation, OperationParam } from './types.ts';
+import {
+  API_FAMILIES,
+  type ApiFamily,
+  type CatalogMeta,
+  type Operation,
+  type OperationParam,
+} from './types.ts';
 
 export interface SearchOptions {
   query?: string;
@@ -79,36 +85,46 @@ export function describeOperation(op: Operation): Operation & { notes: string[] 
   };
 }
 
-export const ALL_FAMILIES: readonly ApiFamily[] = ['api', 'agile', 'xray'];
+/** Families that stay off unless their environment variable is true. The others are always on. */
+export const FAMILY_SWITCHES: Readonly<Partial<Record<ApiFamily, string>>> = {
+  xray: 'JIRA_ENABLE_XRAY',
+};
 
-/** Families exposed by the server: Xray only when JIRA_ENABLE_XRAY=true. */
-export function enabledFamilies(enableXray: boolean): ApiFamily[] {
-  return ALL_FAMILIES.filter((family) => family !== 'xray' || enableXray);
+/** Families exposed by the server, from the state of each switch (e.g. `{ xray: true }`). */
+export function enabledFamilies(
+  switches: Readonly<Partial<Record<ApiFamily, boolean>>>,
+): ApiFamily[] {
+  return API_FAMILIES.filter(
+    (family) => FAMILY_SWITCHES[family] === undefined || switches[family] === true,
+  );
 }
 
 export class Catalog {
   readonly meta: CatalogMeta | undefined;
+  /** Enabled families, in canonical order; never empty. */
   readonly families: readonly ApiFamily[];
+  /** Enabled families that have at least one operation in this catalog. */
+  readonly availableFamilies: readonly ApiFamily[];
   readonly #operations: readonly Operation[];
-  readonly #disabled: ReadonlyMap<string, Operation>;
   readonly #byId: ReadonlyMap<string, Operation>;
   readonly #haystacks: ReadonlyMap<string, string>;
 
   constructor(
     allOperations: readonly Operation[],
     meta?: CatalogMeta,
-    families: readonly ApiFamily[] = ALL_FAMILIES,
+    families: readonly ApiFamily[] = API_FAMILIES,
   ) {
+    this.families = API_FAMILIES.filter((family) => families.includes(family));
+    if (this.families.length === 0)
+      throw new CatalogError('At least one API family must be enabled.');
     this.meta = meta;
-    this.families = ALL_FAMILIES.filter((family) => families.includes(family));
-    const operations = allOperations.filter((op) => this.families.includes(op.api));
-    this.#operations = operations;
-    this.#disabled = new Map(
-      allOperations.filter((op) => !this.families.includes(op.api)).map((op) => [op.id, op]),
+    this.#byId = new Map(allOperations.map((op) => [op.id, op]));
+    this.#operations = allOperations.filter((op) => this.families.includes(op.api));
+    this.availableFamilies = this.families.filter((family) =>
+      this.#operations.some((op) => op.api === family),
     );
-    this.#byId = new Map(operations.map((op) => [op.id, op]));
     this.#haystacks = new Map(
-      operations.map((op) => [op.id, normalizeForSearch(`${op.id} ${op.summary}`)]),
+      this.#operations.map((op) => [op.id, normalizeForSearch(`${op.id} ${op.summary}`)]),
     );
   }
 
@@ -116,22 +132,25 @@ export class Catalog {
     return this.#operations.length;
   }
 
+  /** The operation, if it exists and its family is enabled. */
   get(id: string): Operation | undefined {
-    return this.#byId.get(id.trim());
+    const op = this.#byId.get(id.trim());
+    return op && this.families.includes(op.api) ? op : undefined;
   }
 
   require(id: string): Operation {
-    const op = this.get(id);
-    const disabled = op ? undefined : this.#disabled.get(id.trim());
-    if (disabled)
-      throw new CatalogError(
-        `Operation "${disabled.id}" belongs to the ${disabled.api} API family, which is disabled on this server` +
-          (disabled.api === 'xray' ? ' (enable it with JIRA_ENABLE_XRAY=true).' : '.'),
-      );
+    const op = this.#byId.get(id.trim());
     if (!op)
       throw new CatalogError(
         `Unknown operation "${id}". Use jira_list_operations to find a valid operationId.`,
       );
+    if (!this.families.includes(op.api)) {
+      const variable = FAMILY_SWITCHES[op.api];
+      throw new CatalogError(
+        `Operation "${op.id}" belongs to the ${op.api} API family, which is disabled on this server` +
+          (variable ? ` (enable it with ${variable}=true).` : '.'),
+      );
+    }
     return op;
   }
 

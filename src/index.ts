@@ -37,11 +37,12 @@ const client = new JiraClient({
 const catalog = new Catalog(
   catalogFile.operations,
   catalogFile.meta,
-  enabledFamilies(config.enableXray),
+  enabledFamilies({ xray: config.enableXray }),
 );
-if (config.enableXray && catalogFile.meta.counts.xray === 0) {
+// The model is told too, through the tool description and the server instructions.
+if (catalog.families.includes('xray') && !catalog.availableFamilies.includes('xray')) {
   console.error(
-    '[jira-mcp] WARNING: JIRA_ENABLE_XRAY=true but the catalog has no Xray operation (plugin not installed, or catalog built without it).',
+    '[jira-mcp] WARNING: JIRA_ENABLE_XRAY=true but the catalog has no Xray operation (plugin not installed, or catalog generated without it).',
   );
 }
 

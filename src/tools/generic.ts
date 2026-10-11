@@ -1,7 +1,12 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import { CatalogError, describeOperation, type Catalog } from '../catalog/catalog.ts';
-import type { ApiFamily } from '../catalog/types.ts';
+import {
+  CatalogError,
+  FAMILY_SWITCHES,
+  describeOperation,
+  type Catalog,
+} from '../catalog/catalog.ts';
+import { API_FAMILIES, type ApiFamily } from '../catalog/types.ts';
 import { DESTRUCTIVE, READ, defineTool, type ToolDeps } from './shared.ts';
 
 const scalar = z.union([z.string(), z.number(), z.boolean()]);
@@ -12,11 +17,37 @@ const FAMILY_LABELS: Record<ApiFamily, { name: string; hint: string }> = {
 };
 
 /** "A, B and C" */
-export function familyNames(families: readonly ApiFamily[]): string {
+function familyNames(families: readonly ApiFamily[]): string {
   const names = families.map((family) => FAMILY_LABELS[family].name);
   return names.length > 1
     ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
     : (names[0] ?? '');
+}
+
+/** Families offered to the model: those with operations, else every enabled family (never empty). */
+function offeredFamilies(catalog: Catalog): readonly ApiFamily[] {
+  return catalog.availableFamilies.length > 0 ? catalog.availableFamilies : catalog.families;
+}
+
+/**
+ * What the catalog covers, in one wording shared by the server instructions and jira_list_operations,
+ * e.g. "REST API v2 and Agile 1.0 (Xray is disabled on this server: JIRA_ENABLE_XRAY)".
+ */
+export function describeCoverage(catalog: Catalog): string {
+  const notes: string[] = [];
+  for (const family of API_FAMILIES) {
+    const variable = FAMILY_SWITCHES[family];
+    const { name } = FAMILY_LABELS[family];
+    if (!catalog.families.includes(family)) {
+      notes.push(`${name} is disabled on this server${variable ? ` (${variable})` : ''}`);
+    } else if (catalog.size > 0 && !catalog.availableFamilies.includes(family)) {
+      notes.push(
+        `${name} is enabled but this catalog has no ${name} operation (plugin not installed, or catalog generated without it)`,
+      );
+    }
+  }
+  const covered = familyNames(offeredFamilies(catalog));
+  return notes.length > 0 ? `${covered} (${notes.join('; ')})` : covered;
 }
 
 const callInput = z.object({
@@ -37,6 +68,7 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
   const source = catalog.meta
     ? `Jira ${catalog.meta.jiraVersion} WADL fetched ${catalog.meta.fetchedAt}`
     : 'instance WADL';
+  const offered = offeredFamilies(catalog);
 
   defineTool(
     server,
@@ -44,16 +76,17 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
     'jira_list_operations',
     {
       title: 'List Jira REST operations',
-      description: `Search the ${catalog.size} operations described by the ${source} for ${familyNames(catalog.families)} (other REST families are not covered${catalog.families.includes('xray') ? '' : '; Xray is disabled on this server'}). All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); "not individually reviewed" in its reason means the class comes from the HTTP method only.`,
+      description: `Search the ${catalog.size} operations described by the ${source} for ${describeCoverage(catalog)}. Other REST families are not covered. All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); "not individually reviewed" in its reason means the class comes from the HTTP method only.`,
       inputSchema: z.object({
         query: z
           .string()
           .optional()
           .describe('Keywords, e.g. "worklog", "sprint issue", "version"'),
         api: z
-          .enum(catalog.families as [ApiFamily, ...ApiFamily[]])
+          // Non-empty tuple: Catalog guarantees at least one enabled family.
+          .enum(offered as [ApiFamily, ...ApiFamily[]])
           .optional()
-          .describe(catalog.families.map((family) => FAMILY_LABELS[family].hint).join(', ')),
+          .describe(offered.map((family) => FAMILY_LABELS[family].hint).join(', ')),
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional(),
         access: z.enum(['read', 'write', 'destructive']).optional(),
         limit: z.number().int().min(1).max(100).default(20),

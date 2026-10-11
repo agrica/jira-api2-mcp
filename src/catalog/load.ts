@@ -1,7 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
-import type { CatalogFile } from './types.ts';
+import { API_FAMILIES, type CatalogFile } from './types.ts';
 
 /** `src/catalog/load.ts` and `dist/catalog/load.js` both resolve to `<root>/catalog/catalog.json`. */
 export const DEFAULT_CATALOG_PATH = fileURLToPath(
@@ -20,7 +20,7 @@ const paramSchema = z.object({
 
 const operationSchema = z.object({
   id: z.string().min(1),
-  api: z.enum(['api', 'agile', 'xray']),
+  api: z.enum(API_FAMILIES),
   method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']),
   path: z.string().startsWith('/rest/'),
   summary: z.string(),

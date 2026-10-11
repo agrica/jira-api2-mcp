@@ -143,7 +143,7 @@ Valeurs booléennes acceptées : `true`, `false`, `1`, `0`. Toute autre valeur e
 
 - désactivé, les opérations Xray n'apparaissent pas dans `jira_list_operations`, et un appel à une opération Xray est refusé avec un message qui indique l'option ;
 - le catalogue reste généré et revu avec les opérations Xray si le plugin est installé : on peut donc activer Xray plus tard sans régénérer le catalogue ;
-- activé alors que le catalogue ne contient aucune opération Xray, le serveur affiche un avertissement au démarrage.
+- activé alors que le catalogue ne contient aucune opération Xray, le serveur affiche un avertissement au démarrage et le signale aussi au modèle (description de `jira_list_operations` et instructions du serveur).
 
 **Journal de démarrage** (sur stderr, sans l'URL de l'instance) :
 

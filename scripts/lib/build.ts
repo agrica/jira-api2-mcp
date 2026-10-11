@@ -1,10 +1,11 @@
 import { createHash } from 'node:crypto';
-import type {
-  AccessDecisions,
-  ApiFamily,
-  CatalogFile,
-  Operation,
-  ParsedOperation,
+import {
+  API_FAMILIES,
+  type AccessDecisions,
+  type ApiFamily,
+  type CatalogFile,
+  type Operation,
+  type ParsedOperation,
 } from '../../src/catalog/types.ts';
 import { classifyOperations, type ReviewCandidate, type ReviewCategory } from './classify.ts';
 import type { CatalogDiff } from './diff.ts';
@@ -82,12 +83,11 @@ export function buildCatalog(input: {
 
 /** Families that must have operations: api and agile always, others when their source is present. */
 const ALWAYS_REQUIRED: ReadonlySet<ApiFamily> = new Set(['api', 'agile']);
-const FAMILIES: readonly ApiFamily[] = ['api', 'agile', 'xray'];
 
 /** Families without any operation although they are required (absent optional sources are fine). */
 export function emptyFamilies(meta: FetchMeta, catalog: CatalogFile): ApiFamily[] {
   const present = new Set(meta.sources.map((s) => s.api));
-  return FAMILIES.filter(
+  return API_FAMILIES.filter(
     (f) => (ALWAYS_REQUIRED.has(f) || present.has(f)) && catalog.meta.counts[f] === 0,
   );
 }

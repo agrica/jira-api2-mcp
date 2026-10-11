@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { Catalog, CatalogError, describeOperation } from './catalog.ts';
+import { Catalog, CatalogError, describeOperation, enabledFamilies } from './catalog.ts';
 import type { Operation } from './types.ts';
 
 const base = { summary: '', body: { accepted: false, mediaTypes: [] }, accessReason: 'test' };
@@ -113,10 +113,29 @@ describe('Catalog — enabled API families', () => {
   it('hides the operations of disabled families and explains why they cannot be used', () => {
     const noXray = new Catalog([...OPS, xrayOp], meta, ['api', 'agile']);
     expect(noXray.families).toEqual(['api', 'agile']);
+    expect(noXray.availableFamilies).toEqual(['api', 'agile']);
     expect(noXray.size).toBe(4);
     expect(noXray.get(xrayOp.id)).toBeUndefined();
     expect(noXray.search({ query: 'raven' }).total).toBe(0);
     expect(() => noXray.require(xrayOp.id)).toThrow(/xray.*disabled.*JIRA_ENABLE_XRAY=true/i);
+    expect(() => new Catalog(OPS, meta, ['agile']).require(OPS[0]!.id)).toThrow(
+      /api API family, which is disabled on this server\.$/,
+    );
+  });
+
+  it('lists available families: enabled ones that have operations', () => {
+    expect(new Catalog(OPS, meta).availableFamilies).toEqual(['api', 'agile']);
+    expect(new Catalog([...OPS, xrayOp], meta).availableFamilies).toEqual(['api', 'agile', 'xray']);
+  });
+
+  it('refuses an empty family list', () => {
+    expect(() => new Catalog(OPS, meta, [])).toThrow(CatalogError);
+  });
+
+  it('enables switchable families only when their switch is true', () => {
+    expect(enabledFamilies({})).toEqual(['api', 'agile']);
+    expect(enabledFamilies({ xray: false })).toEqual(['api', 'agile']);
+    expect(enabledFamilies({ xray: true })).toEqual(['api', 'agile', 'xray']);
   });
 });
 

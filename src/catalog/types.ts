@@ -1,6 +1,8 @@
 import type { Access, HttpMethod } from '../http/jira-client.ts';
 
-export type ApiFamily = 'api' | 'agile' | 'xray';
+/** The single list of API families: the catalog schema, the build checks and the server derive from it. */
+export const API_FAMILIES = ['api', 'agile', 'xray'] as const;
+export type ApiFamily = (typeof API_FAMILIES)[number];
 export type ParamType = 'string' | 'integer' | 'number' | 'boolean';
 
 export interface OperationParam {
