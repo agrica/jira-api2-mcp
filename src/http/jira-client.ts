@@ -15,6 +15,7 @@ import {
   retryAfterLabel,
 } from './jira-error.ts';
 import { accessProblem, restPathProblem } from './request-guards.ts';
+import { hostPattern } from '../util/redact.ts';
 
 /** The single list of HTTP methods: the catalog schema and the tools derive from it. */
 export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] as const;
@@ -58,6 +59,8 @@ export interface JiraClientOptions {
 }
 
 const RETRYABLE_STATUS: ReadonlySet<number> = new Set([429, 502, 503, 504]);
+/** Error statuses after which a write may nevertheless have been applied. */
+const UNCERTAIN_WRITE_STATUS: ReadonlySet<number> = new Set([500, 502, 504]);
 const ERROR_BODY_MAX_BYTES = 64 * 1024;
 const MAX_RETRY_DELAY_MS = 10_000;
 const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
@@ -208,7 +211,7 @@ export class JiraClient {
   /** Context path of the instance, without trailing slash ('' at the root). */
   readonly #basePath: string;
   /** The instance host name, matched case-insensitively in error text. */
-  readonly #hostPattern: RegExp;
+  readonly #hostPattern: RegExp | undefined;
   readonly #pat: string;
   readonly #timeoutMs: number;
   readonly #maxResponseBytes: number;
@@ -234,7 +237,7 @@ export class JiraClient {
     this.allowWrites = options.allowWrites;
     this.#origin = base.origin;
     this.#basePath = base.pathname.replace(/\/+$/, '');
-    this.#hostPattern = new RegExp(base.hostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
+    this.#hostPattern = hostPattern(base.hostname);
     this.#pat = options.pat;
     this.#timeoutMs = options.timeoutMs;
     this.#maxResponseBytes = options.maxResponseBytes;
@@ -326,6 +329,9 @@ export class JiraClient {
         throw error;
       }
       if (!res.ok) {
+        // A proxy may give up (500/502/504) while Jira is still applying the write.
+        if (req.access !== 'read' && UNCERTAIN_WRITE_STATUS.has(res.status))
+          note = note ? `${note} — ${WRITE_OUTCOME_UNKNOWN}` : WRITE_OUTCOME_UNKNOWN;
         throw new JiraApiError(
           res.status,
           req.method,
@@ -412,7 +418,7 @@ export class JiraClient {
     let out = text.replaceAll(`Bearer ${this.#pat}`, 'Bearer <redacted>');
     // A very short value would also hit ordinary words: it is redacted in its header form only.
     if (this.#pat.length >= MIN_REDACTED_LENGTH) out = out.replaceAll(this.#pat, '<redacted>');
-    return out.replace(this.#hostPattern, '<instance>');
+    return this.#hostPattern ? out.replace(this.#hostPattern, '<instance>') : out;
   }
 
   /** Error text from fetch/undici, safe for the model: no PAT (header errors echo it), host, IP or cert name. */

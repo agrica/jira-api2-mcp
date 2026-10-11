@@ -1096,3 +1096,61 @@ describe('retryDelayMs — HTTP-date', () => {
     expect(retryDelayMs('-5', 0, now)).toBe(500);
   });
 });
+
+describe('JiraClient.request — write outcome on 5xx (final review)', () => {
+  it('warns that a write answered 500, 502 or 504 may have been applied; reads unchanged', async () => {
+    const { client, fetchMock } = setup();
+    for (const status of [500, 502, 504]) {
+      fetchMock.mockResolvedValueOnce(new Response('gateway', { status }));
+      const message = await client
+        .request({ method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} })
+        .catch((e: unknown) => (e as Error).message);
+      expect(message).toBe(
+        `Jira POST /rest/api/2/issue failed with HTTP ${status}: gateway — The operation may already have been applied by Jira: check its state before retrying.`,
+      );
+    }
+    fetchMock.mockResolvedValueOnce(new Response('bad', { status: 400 }));
+    const rejected = await client
+      .request({ method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} })
+      .catch((e: unknown) => (e as Error).message);
+    expect(rejected).not.toContain('may already have been applied');
+    const { client: reader, fetchMock: readFetch } = setup({ maxRetries: 0 });
+    readFetch.mockResolvedValueOnce(new Response('gateway', { status: 502 }));
+    const read = await reader
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(read).toBe('Jira GET /rest/api/2/myself failed with HTTP 502: gateway');
+  });
+});
+
+describe('JiraClient.request — host redaction on label boundaries (final review)', () => {
+  it('redacts the host only as a whole name, and never a single-label host', async () => {
+    const { client, fetchMock } = setup({ baseUrl: 'https://jira.example.com', maxRetries: 0 });
+    fetchMock.mockRejectedValueOnce(
+      networkError(
+        'ENOTFOUND',
+        'getaddrinfo ENOTFOUND jira.example.com. x.jira.example.com jira.example.community',
+      ),
+    );
+    const message = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(message).toContain(
+      'getaddrinfo ENOTFOUND <instance>. x.jira.example.com jira.example.community',
+    );
+    const { client: single, fetchMock: singleFetch } = setup({
+      baseUrl: 'https://jira',
+      maxRetries: 0,
+    });
+    singleFetch.mockResolvedValueOnce(
+      new Response(JSON.stringify({ errorMessages: ['Jira says jira-mcp failed'] }), {
+        status: 400,
+        headers: { 'content-type': 'application/json' },
+      }),
+    );
+    const text = await single
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(text).toContain('Jira says jira-mcp failed');
+  });
+});

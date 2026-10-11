@@ -126,17 +126,17 @@ Il n'affiche que des libellés `PASS` / `FAIL` et des comptes, jamais l'URL ni l
 
 Le serveur se configure uniquement par variables d'environnement.
 
-| Variable                   | Requis | Défaut                 | Rôle                                                                                                                                             |
-| -------------------------- | ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `JIRA_BASE_URL`            | oui    | —                      | URL de l'instance, par exemple `https://jira.example.com` (valeur fictive). HTTPS exigé par défaut. Ni identifiants, ni paramètres, ni fragment. |
-| `JIRA_PAT`                 | oui    | —                      | Personal Access Token, envoyé en `Authorization: Bearer` ; caractères ASCII visibles uniquement (espaces de début et de fin retirés)             |
-| `JIRA_ALLOW_WRITES`        | non    | `false`                | active les 10 outils d'écriture dédiés et `jira_call_write_operation`                                                                            |
-| `JIRA_ENABLE_XRAY`         | non    | `false`                | expose les opérations Xray du catalogue dans les outils génériques                                                                               |
-| `JIRA_ALLOW_INSECURE_HTTP` | non    | `false`                | accepte `http://` pour des tests locaux exceptionnels (avertissement au démarrage)                                                               |
-| `JIRA_TIMEOUT_MS`          | non    | `30000`                | délai maximal par tentative de requête (au plus `600000`, soit 10 min)                                                                           |
-| `JIRA_MAX_RESPONSE_BYTES`  | non    | `5242880`              | taille maximale d'une réponse HTTP (5 Mio) ; au-delà, la lecture est interrompue (au plus `268435456`, 256 Mio)                                  |
-| `JIRA_MAX_OUTPUT_CHARS`    | non    | `100000`               | taille maximale du texte rendu au modèle, messages d'erreur compris ; au-delà, la sortie est tronquée avec la mention « output truncated »       |
-| `JIRA_CATALOG_PATH`        | non    | `catalog/catalog.json` | emplacement du catalogue (le défaut est résolu par rapport au dossier d'installation, pas au répertoire courant)                                 |
+| Variable                   | Requis | Défaut                 | Rôle                                                                                                                                                             |
+| -------------------------- | ------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `JIRA_BASE_URL`            | oui    | —                      | URL de l'instance, par exemple `https://jira.example.com` (valeur fictive). HTTPS exigé par défaut. Ni identifiants, ni paramètres, ni fragment.                 |
+| `JIRA_PAT`                 | oui    | —                      | Personal Access Token, envoyé en `Authorization: Bearer` ; caractères ASCII visibles uniquement (espaces de début et de fin retirés)                             |
+| `JIRA_ALLOW_WRITES`        | non    | `false`                | active les 10 outils d'écriture dédiés et `jira_call_write_operation`                                                                                            |
+| `JIRA_ENABLE_XRAY`         | non    | `false`                | expose les opérations Xray du catalogue dans les outils génériques                                                                                               |
+| `JIRA_ALLOW_INSECURE_HTTP` | non    | `false`                | accepte `http://` pour des tests locaux exceptionnels (avertissement au démarrage)                                                                               |
+| `JIRA_TIMEOUT_MS`          | non    | `30000`                | délai maximal par tentative de requête (au plus `600000`, soit 10 min)                                                                                           |
+| `JIRA_MAX_RESPONSE_BYTES`  | non    | `5242880`              | taille maximale d'une réponse HTTP (5 Mio) ; au-delà, la lecture est interrompue (au plus `268435456`, 256 Mio)                                                  |
+| `JIRA_MAX_OUTPUT_CHARS`    | non    | `100000`               | taille maximale du texte rendu au modèle, messages d'erreur compris ; au-delà, la sortie est tronquée avec la mention « output truncated » (au plus `100000000`) |
+| `JIRA_CATALOG_PATH`        | non    | `catalog/catalog.json` | emplacement du catalogue (le défaut est résolu par rapport au dossier d'installation, pas au répertoire courant)                                                 |
 
 Valeurs booléennes acceptées : `true`, `false`, `1`, `0`. Les valeurs numériques sont des entiers décimaux positifs (`0x10` ou `1e3` sont refusés). Toute autre valeur est refusée au démarrage avec un message qui nomme la variable, sans reprendre la valeur du PAT ni l'URL. Une variable facultative vide (`""`, fréquent dans les configurations MCP) est traitée comme absente.
 
@@ -337,7 +337,7 @@ Exemple :
   - une écriture n'est jamais rejouée.
 - **Annulation.** Si le client MCP annule un appel, la requête Jira en cours est interrompue et n'est pas réessayée. Une écriture déjà reçue par Jira a pu être appliquée : vérifiez son état avant de la relancer. Si Jira avait déjà répondu 2xx, le message dit que l'écriture A été appliquée (« the write WAS applied »).
 - **Écritures à l'issue incertaine.**
-  - Quand une écriture échoue après avoir pu atteindre Jira, avant toute réponse 2xx (délai dépassé, connexion coupée, annulation, coupure pendant la lecture d'une réponse d'erreur, page HTML à la place de JSON), le message se termine par « The operation may already have been applied by Jira: check its state before retrying. » : vérifiez l'état dans Jira avant de relancer.
+  - Quand une écriture échoue après avoir pu atteindre Jira, avant toute réponse 2xx (délai dépassé, connexion coupée, annulation, coupure pendant la lecture d'une réponse d'erreur, page HTML à la place de JSON, réponse HTTP 500, 502 ou 504 — un proxy peut abandonner pendant que Jira applique l'écriture), le message se termine par « The operation may already have been applied by Jira: check its state before retrying. » : vérifiez l'état dans Jira avant de relancer.
   - Une connexion refusée ou impossible à établir (`ECONNREFUSED`, `ENOTFOUND`, certificat), ou une requête refusée avant l'envoi (port interdit, en-tête invalide), ne porte pas cet avertissement : la requête n'est pas partie.
   - Quand Jira a répondu 2xx mais que le corps de la réponse est illisible (trop gros, JSON invalide, connexion coupée ou délai dépassé pendant sa lecture), l'outil renvoie un succès : « … succeeded (HTTP 201): the write WAS applied, but its response could not be read (…) ». Ne relancez pas l'écriture.
 - **Réponse HTML.** Une réponse 2xx en HTML là où Jira doit répondre en JSON (page de connexion d'un proxy d'authentification ou d'un SSO) est une erreur, « unexpected HTML response instead of JSON », et non un succès.

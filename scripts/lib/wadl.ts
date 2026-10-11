@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
+import { decodeHtmlEntities } from '../../src/http/jira-error.ts';
 import { PATH_PLACEHOLDER } from '../../src/catalog/catalog.ts';
-import type { HttpMethod } from '../../src/http/jira-client.ts';
+import { HTTP_METHODS, type HttpMethod } from '../../src/http/jira-client.ts';
 import { restPathProblem } from '../../src/http/request-guards.ts';
 import type {
   ApiFamily,
@@ -51,15 +52,7 @@ const ARRAY_TAGS = new Set([
   'representation',
   'doc',
 ]);
-const METHODS: ReadonlySet<string> = new Set<HttpMethod>([
-  'GET',
-  'POST',
-  'PUT',
-  'DELETE',
-  'PATCH',
-  'HEAD',
-  'OPTIONS',
-]);
+const METHODS: ReadonlySet<string> = new Set<HttpMethod>(HTTP_METHODS);
 
 const parser = new XMLParser({
   ignoreAttributes: false,
@@ -95,16 +88,6 @@ function mapType(xsType: string | undefined): ParamType {
   return 'string';
 }
 
-function decodeEntities(text: string): string {
-  return text
-    .replace(/&lt;/g, '<')
-    .replace(/&gt;/g, '>')
-    .replace(/&quot;/g, '"')
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&#(\d+);/g, (_m, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&amp;/g, '&');
-}
-
 /** A `<doc>` text, without CDATA markers; a doc with only a `title` attribute gives its title. */
 function oneDoc(d: XmlDoc): string {
   const text = typeof d === 'string' ? d : (d['#text'] ?? '');
@@ -114,7 +97,7 @@ function oneDoc(d: XmlDoc): string {
 
 function docText(docs: XmlDoc[] | undefined): string {
   const raw = (docs ?? []).map(oneDoc).join(' ');
-  return decodeEntities(raw)
+  return decodeHtmlEntities(raw)
     .replace(/<[^>]+>/g, ' ')
     .replace(/\s+/g, ' ')
     .trim()

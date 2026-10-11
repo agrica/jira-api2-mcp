@@ -1,3 +1,4 @@
+import { boundedPattern } from '../../src/util/redact.ts';
 import { findSecrets } from './secret-scan.ts';
 
 const ALLOWED: readonly RegExp[] = [
@@ -81,16 +82,21 @@ export function packageProblems(
  */
 export function sensitiveLiterals(env: Readonly<Record<string, string | undefined>>): string[] {
   const values: string[] = [];
-  if (env.JIRA_PAT) values.push(env.JIRA_PAT);
+  const pat = env.JIRA_PAT?.trim();
+  if (pat) values.push(pat);
   if (env.JIRA_BASE_URL && URL.canParse(env.JIRA_BASE_URL)) {
     const url = new URL(env.JIRA_BASE_URL);
-    values.push(url.host, url.hostname);
+    // A single-label host ("jira") is also an ordinary word: only kept with its port.
+    if (url.host.includes('.') || url.host.includes(':')) values.push(url.host);
+    if (url.hostname.includes('.')) values.push(url.hostname);
   }
   return [...new Set(values)];
 }
 
-/** Case-insensitive search (host names are case-insensitive); empty literals never match. */
+/**
+ * Case-insensitive search (host names are case-insensitive) of whole names only: a literal inside a
+ * longer host name or word does not match. Empty literals never match.
+ */
 export function containsLiteral(text: string, literals: readonly string[]): boolean {
-  const haystack = text.toLowerCase();
-  return literals.some((value) => value !== '' && haystack.includes(value.toLowerCase()));
+  return literals.some((value) => value !== '' && boundedPattern(value).test(text));
 }

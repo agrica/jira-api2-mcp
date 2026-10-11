@@ -123,6 +123,16 @@ describe('sensitiveLiterals', () => {
     expect(sensitiveLiterals({ JIRA_BASE_URL: 'not a url' })).toEqual([]);
   });
 
+  it('trims the PAT and ignores single-label hosts (they would match ordinary words)', () => {
+    const pat = ['abcdefgh', '12345678'].join('');
+    expect(sensitiveLiterals({ JIRA_PAT: `  ${pat}\n` })).toEqual([pat]);
+    expect(sensitiveLiterals({ JIRA_BASE_URL: 'https://jira/' })).toEqual([]);
+    expect(sensitiveLiterals({ JIRA_BASE_URL: 'https://jira:8443/' })).toEqual(['jira:8443']);
+    expect(
+      containsLiteral('Jira and jira-mcp', sensitiveLiterals({ JIRA_BASE_URL: 'https://jira' })),
+    ).toBe(false);
+  });
+
   it('returns the bare hostname too when the URL has a port, lower-cased', () => {
     expect(sensitiveLiterals({ JIRA_BASE_URL: 'https://Jira.Example.com:8443/jira' })).toEqual([
       'jira.example.com:8443',
@@ -132,6 +142,13 @@ describe('sensitiveLiterals', () => {
 });
 
 describe('containsLiteral', () => {
+  it('matches on label boundaries only', () => {
+    expect(containsLiteral('host: jira.example.com.', ['jira.example.com'])).toBe(true);
+    expect(containsLiteral('x.jira.example.com', ['jira.example.com'])).toBe(false);
+    expect(containsLiteral('jira.example.community', ['jira.example.com'])).toBe(false);
+    expect(containsLiteral('my-jira.example.com', ['jira.example.com'])).toBe(false);
+  });
+
   it('matches case-insensitively and ignores empty literals', () => {
     expect(containsLiteral('see JIRA.EXAMPLE.COM/x', ['jira.example.com'])).toBe(true);
     expect(containsLiteral('nothing here', ['jira.example.com', ''])).toBe(false);

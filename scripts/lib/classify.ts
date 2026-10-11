@@ -1,4 +1,4 @@
-import type { Access } from '../../src/http/jira-client.ts';
+import { HTTP_METHODS, type Access } from '../../src/http/jira-client.ts';
 import { accessProblem } from '../../src/http/request-guards.ts';
 import type { AccessDecisions, Operation, ParsedOperation } from '../../src/catalog/types.ts';
 
@@ -61,7 +61,7 @@ const DECISION_FIELDS: ReadonlySet<string> = new Set([
   'reviewedOn',
 ]);
 const DAY_MS = 86_400_000;
-const DECISION_ID = /^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) \/rest\//;
+const DECISION_ID = new RegExp(`^(?:${HTTP_METHODS.join('|')}) /rest/`);
 
 /** Values that stand for "to be filled in": `<…>`, TODO, TBD, FIXME, ?, x, xxx, n/a, none, unknown. */
 const PLACEHOLDER = /^(?:<[^>]*>|(?:todo|tbd|fixme)(?:\b.*)?|\?+|x+|n\/?a|none|unknown|-+|\.+)$/i;

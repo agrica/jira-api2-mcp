@@ -366,3 +366,13 @@ describe('parseWadl — wave 2 review follow-ups', () => {
     );
   });
 });
+
+describe('parseWadl — doc entities (final review)', () => {
+  it('keeps out-of-range numeric entities as text instead of throwing', () => {
+    const xml = `<?xml version="1.0"?>
+<application xmlns="http://wadl.dev.java.net/2009/02">
+  <resources base="https://jira.example.com/rest/api/2/"><resource path="x"><method name="GET"><doc>a &#99999999; b &#65;</doc></method></resource></resources>
+</application>`;
+    expect(parseWadl(xml, 'api')[0]?.summary).toBe('a &#99999999; b A');
+  });
+});
