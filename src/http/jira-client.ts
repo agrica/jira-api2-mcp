@@ -91,6 +91,8 @@ const NOT_SENT_CODES: ReadonlySet<string> = new Set([
   'UND_ERR_CONNECT_TIMEOUT',
 ]);
 const TLS_CODE = /CERT|^ERR_TLS_|^ERR_SSL_|^UNABLE_TO_/;
+/** Messages (without error code) of requests that fetch refused to build or send. */
+const NOT_BUILT = /bad port|invalid header|ByteString|credentials/i;
 
 export function isRetryable(req: JiraRequest): boolean {
   return req.access === 'read' && !(req.body instanceof FormData);
@@ -104,9 +106,9 @@ export function parseRetryAfterMs(value: string | null, now: number): number | u
   const text = value?.trim();
   // Number('') is 0: a blank header must fall back to the backoff, not mean "retry now".
   if (!text) return undefined;
-  const seconds = Number(text);
-  if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : undefined;
-  const date = Date.parse(text);
+  if (/^\d+$/.test(text)) return Number(text) * 1000;
+  // HTTP-date forms all start with a day name; anything else ("0x10", "-5", "1e1") is invalid.
+  const date = /^[a-z]{3}/i.test(text) ? Date.parse(text) : Number.NaN;
   return Number.isNaN(date) ? undefined : Math.max(0, date - now);
 }
 
@@ -203,6 +205,8 @@ export class JiraClient {
   readonly #origin: string;
   /** Context path of the instance, without trailing slash ('' at the root). */
   readonly #basePath: string;
+  /** The instance host name, matched case-insensitively in error text. */
+  readonly #hostPattern: RegExp;
   readonly #pat: string;
   readonly #timeoutMs: number;
   readonly #maxResponseBytes: number;
@@ -228,6 +232,7 @@ export class JiraClient {
     this.allowWrites = options.allowWrites;
     this.#origin = base.origin;
     this.#basePath = base.pathname.replace(/\/+$/, '');
+    this.#hostPattern = new RegExp(base.hostname.replace(/[.*+?^${}()|[\]\\]/g, '\\$&'), 'gi');
     this.#pat = options.pat;
     this.#timeoutMs = options.timeoutMs;
     this.#maxResponseBytes = options.maxResponseBytes;
@@ -296,12 +301,16 @@ export class JiraClient {
           timeout,
         );
       } catch (error) {
-        // Jira answered 2xx: the write is applied even though its body is too large to read.
-        if (error instanceof ResponseTooLargeError && req.access !== 'read') {
+        // Jira answered 2xx to a write: it is applied, whatever happens to the body afterwards.
+        if (res.ok && req.access !== 'read') {
+          if (error instanceof RequestCancelledError)
+            throw new RequestCancelledError(req.method, req.path, req.access, res.status);
           return appliedButUnreadable(
             req,
             res.status,
-            `it exceeds ${this.#maxResponseBytes} bytes, JIRA_MAX_RESPONSE_BYTES`,
+            error instanceof ResponseTooLargeError
+              ? `it exceeds ${this.#maxResponseBytes} bytes, JIRA_MAX_RESPONSE_BYTES`
+              : 'connection lost / timed out while reading it',
           );
         }
         // Cancellation and size limit are final; timeouts and network errors mid-body are retried
@@ -319,7 +328,8 @@ export class JiraClient {
           res.status,
           req.method,
           req.path,
-          extractErrorDetails(text, contentType),
+          // A proxy page may echo request headers: no PAT or instance host back to the model.
+          extractErrorDetails(text, contentType).map((detail) => this.#cleanSecrets(detail)),
           res.headers.get('retry-after'),
           note,
           res.headers.get('x-authentication-denied-reason'),
@@ -361,7 +371,8 @@ export class JiraClient {
     if (text === '') return { status, data: null };
     const expectsJson = (req.accept ?? 'application/json').includes('json');
     if (expectsJson && contentType?.includes('html')) {
-      const title = htmlTitle(text);
+      const rawTitle = htmlTitle(text);
+      const title = rawTitle === undefined ? undefined : this.#cleanSecrets(rawTitle);
       throw new Error(
         `Jira ${req.method} ${req.path} returned an unexpected HTML response instead of JSON (HTTP ${status}${title ? `: ${JSON.stringify(title)}` : ''}) — authentication proxy or SSO login page? Check JIRA_BASE_URL and the proxy.${outcomeWarning(req.access)}`,
       );
@@ -394,12 +405,17 @@ export class JiraClient {
     return { headers, body: JSON.stringify(req.body) };
   }
 
-  /** Error text from fetch/undici, safe for the model: no PAT (header errors echo it), no IP or cert name. */
-  #clean(text: string): string {
+  /** Text from Jira or a proxy, safe for the model: no PAT, no instance host name. */
+  #cleanSecrets(text: string): string {
     let out = text.replaceAll(`Bearer ${this.#pat}`, 'Bearer <redacted>');
     // A very short value would also hit ordinary words: it is redacted in its header form only.
     if (this.#pat.length >= MIN_REDACTED_LENGTH) out = out.replaceAll(this.#pat, '<redacted>');
-    return redactNetworkDetails(out);
+    return out.replace(this.#hostPattern, '<instance>');
+  }
+
+  /** Error text from fetch/undici, safe for the model: no PAT (header errors echo it), host, IP or cert name. */
+  #clean(text: string): string {
+    return redactNetworkDetails(this.#cleanSecrets(text));
   }
 
   async #pause(ms: number, req: JiraRequest, cancel: AbortSignal | undefined): Promise<void> {
@@ -453,15 +469,24 @@ export class JiraClient {
         throw new RequestTimeoutError(req.method, req.path, this.#timeoutMs, req.access, error);
       }
       const message = this.#clean(error instanceof Error ? error.message : String(error));
+      const code = causeCode(error);
+      // An AggregateError cause (several addresses tried) has an empty message: name its code.
       const inner =
-        error instanceof Error && error.cause instanceof Error ? error.cause.message : undefined;
-      const cause = inner === undefined ? '' : ` (${this.#clean(inner)})`;
+        error instanceof Error && error.cause instanceof Error
+          ? error.cause.message || code
+          : undefined;
+      const cause = inner ? ` (${this.#clean(inner)})` : '';
       const hint = /redirect/i.test(inner ?? '')
         ? ' — redirects are refused: check JIRA_BASE_URL (context path) or an SSO / authentication proxy'
         : '';
-      const code = causeCode(error);
-      // A connection that was never established cannot have applied a write.
-      const notSent = code !== undefined && (NOT_SENT_CODES.has(code) || TLS_CODE.test(code));
+      // A connection that was never established, or a request refused while being built (bad
+      // port, invalid header, credentials in the URL), cannot have applied a write.
+      const notSent =
+        code === undefined
+          ? NOT_BUILT.test(
+              `${error instanceof Error ? error.message : String(error)} ${inner ?? ''}`,
+            )
+          : NOT_SENT_CODES.has(code) || TLS_CODE.test(code);
       const warning = req.access === 'read' || notSent ? '' : `. ${WRITE_OUTCOME_UNKNOWN}`;
       throw new RequestFailedError(
         `Jira ${req.method} ${req.path} failed: ${message}${cause}${hint}${warning}`,

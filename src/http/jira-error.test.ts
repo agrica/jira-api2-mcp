@@ -63,6 +63,12 @@ describe('extractErrorDetails — rendering (audit)', () => {
     ).toEqual(["Log in - Jira & Co 'x' <b>!?"]);
   });
 
+  it('keeps out-of-range numeric entities as text instead of throwing', () => {
+    expect(extractErrorDetails('<title>a &#99999999; b &#x110000; c</title>', 'text/html')).toEqual(
+      ['a &#99999999; b &#x110000; c'],
+    );
+  });
+
   it('strips markup, scripts and styles from an HTML body without a title', () => {
     const html =
       '<html><head><style>p{color:red}</style><script>var secret = 1;</script></head><body><h1>Proxy error</h1><p>Upstream &amp; down</p></body></html>';

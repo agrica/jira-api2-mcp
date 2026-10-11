@@ -492,7 +492,7 @@ const stallingBodyFetch: FetchLike = async (_input, init) => {
 };
 
 describe('JiraClient.request — aborts during the body read', () => {
-  it('maps a cancellation mid-body to RequestCancelledError, with the write warning', async () => {
+  it('maps a cancellation mid-body of a 2xx write to RequestCancelledError saying it WAS applied', async () => {
     const { client, fetchMock } = setup();
     fetchMock.mockImplementation(stallingBodyFetch);
     const controller = new AbortController();
@@ -506,7 +506,10 @@ describe('JiraClient.request — aborts during the body read', () => {
     pending.catch(() => {});
     await vi.waitFor(() => expect(fetchMock).toHaveBeenCalledOnce());
     controller.abort();
-    await expect(pending).rejects.toThrow('may already have been applied by Jira');
+    await expect(pending).rejects.toBeInstanceOf(RequestCancelledError);
+    await expect(pending).rejects.toThrow(
+      'Jira POST /rest/api/2/issue cancelled by the MCP client after Jira answered HTTP 200: the write WAS applied. Do not retry it.',
+    );
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -519,12 +522,19 @@ describe('JiraClient.request — aborts during the body read', () => {
     expect(fetchMock).toHaveBeenCalledTimes(2);
   });
 
-  it('does not retry a write that times out mid-body', async () => {
+  it('does not retry a 2xx write that times out mid-body, and reports it as applied', async () => {
     const { client, fetchMock } = setup({ timeoutMs: 20, maxRetries: 1 });
     fetchMock.mockImplementation(stallingBodyFetch);
-    await expect(
-      client.request({ method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} }),
-    ).rejects.toThrow('timed out after 20 ms');
+    const res = await client.request({
+      method: 'POST',
+      path: '/rest/api/2/issue',
+      access: 'write',
+      body: {},
+    });
+    expect(res.status).toBe(200);
+    expect(res.data).toBe(
+      'Jira POST /rest/api/2/issue succeeded (HTTP 200): the write WAS applied, but its response could not be read (connection lost / timed out while reading it). Do not retry it; read the resulting state if you need its details.',
+    );
     expect(fetchMock).toHaveBeenCalledOnce();
   });
 
@@ -622,13 +632,17 @@ describe('JiraClient.request — network errors during the body read', () => {
     expect(fetchMock).toHaveBeenCalledTimes(3);
   });
 
-  it('never retries a write whose body fails mid-stream', async () => {
+  it('never retries a 2xx write whose body fails mid-stream, and reports it as applied', async () => {
     const { client, fetchMock } = setup();
     fetchMock.mockResolvedValueOnce(brokenBody()).mockResolvedValueOnce(json({ id: '1' }));
-    await expect(
-      client.request({ method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} }),
-    ).rejects.toThrow(
-      'failed while reading the response: terminated. The operation may already have been applied by Jira: check its state before retrying.',
+    const res = await client.request({
+      method: 'POST',
+      path: '/rest/api/2/issue',
+      access: 'write',
+      body: {},
+    });
+    expect(res.data).toBe(
+      'Jira POST /rest/api/2/issue succeeded (HTTP 200): the write WAS applied, but its response could not be read (connection lost / timed out while reading it). Do not retry it; read the resulting state if you need its details.',
     );
     expect(fetchMock).toHaveBeenCalledOnce();
   });
@@ -643,6 +657,9 @@ describe('JiraClient.request — path hardening (audit)', () => {
       String.raw`/rest/api/2/..\..\..\secure\admin`,
       '/rest/api/2/x?os_authType=basic#',
       '/rest/api/2/issue/a%2Fb',
+      '/rest/api/2/..;/..;/..;/secure/admin',
+      '/rest/api/2/.;/x',
+      '/rest/api/2/..;jsessionid=1/secure/admin',
     ]) {
       await expect(client.request({ method: 'GET', path, access: 'read' })).rejects.toThrow(
         /Refusing to call a non-REST path/,
@@ -742,6 +759,78 @@ describe('JiraClient.request — PAT never echoed (audit)', () => {
   });
 });
 
+describe('JiraClient.request — error text hygiene (fix round 1)', () => {
+  const write = { method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} } as const;
+
+  it('does not warn when the request was refused before being sent', async () => {
+    const { client, fetchMock } = setup();
+    for (const error of [
+      new TypeError('fetch failed', { cause: new TypeError('bad port') }),
+      new TypeError('Headers.append: "x" is an invalid header value.'),
+      new TypeError('Cannot convert argument to a ByteString'),
+      new TypeError('Request cannot be constructed from a URL that includes credentials'),
+    ]) {
+      fetchMock.mockRejectedValueOnce(error);
+      const message = await client.request(write).catch((e: unknown) => (e as Error).message);
+      expect(message).not.toContain('may already have been applied');
+    }
+  });
+
+  it('names the cause code when the cause message is empty (AggregateError)', async () => {
+    const { client, fetchMock } = setup({ maxRetries: 0 });
+    fetchMock.mockRejectedValueOnce(
+      new TypeError('fetch failed', {
+        cause: Object.assign(new AggregateError([], ''), { code: 'ECONNREFUSED' }),
+      }),
+    );
+    const message = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(message).toBe('Jira GET /rest/api/2/myself failed: fetch failed (ECONNREFUSED)');
+  });
+
+  it('redacts the instance hostname from network errors', async () => {
+    const { client, fetchMock } = setup({
+      baseUrl: 'https://Jira.Example.com/jira',
+      maxRetries: 0,
+    });
+    fetchMock.mockRejectedValueOnce(
+      networkError('ENOTFOUND', 'getaddrinfo ENOTFOUND jira.example.com'),
+    );
+    const message = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(message).toBe(
+      'Jira GET /rest/api/2/myself failed: fetch failed (getaddrinfo ENOTFOUND <instance>)',
+    );
+  });
+
+  it('redacts the PAT echoed by a proxy in an error body or an HTML title', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('<html><body>Header: Bearer secret-pat</body></html>', {
+          status: 500,
+          headers: { 'content-type': 'text/html' },
+        }),
+      )
+      .mockResolvedValueOnce(
+        new Response('<title>Hello secret-pat</title>', {
+          headers: { 'content-type': 'text/html' },
+        }),
+      );
+    const first = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    const second = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(first).toContain('Header: Bearer <redacted>');
+    expect(second).toContain('"Hello <redacted>"');
+    expect(`${first}${second}`).not.toContain('secret-pat');
+  });
+});
+
 describe('JiraClient.request — writes of unknown outcome (audit)', () => {
   const write = { method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} } as const;
   const warning = 'may already have been applied by Jira: check its state before retrying';
@@ -758,18 +847,35 @@ describe('JiraClient.request — writes of unknown outcome (audit)', () => {
     expect(read).toBe('Jira GET /rest/api/2/myself timed out after 20 ms.');
   });
 
-  it('warns on a write timeout while reading the body (multipart included)', async () => {
+  it('reports a 2xx write that times out while reading the body as applied (multipart included)', async () => {
     const { client, fetchMock } = setup({ timeoutMs: 20 });
     fetchMock.mockImplementation(stallingBodyFetch);
-    await expect(client.request(write)).rejects.toThrow(warning);
-    await expect(
-      client.request({
-        method: 'POST',
-        path: '/rest/api/2/issue/DEMO-1/attachments',
-        access: 'write',
-        body: new FormData(),
-      }),
-    ).rejects.toThrow(warning);
+    expect((await client.request(write)).data).toMatch(
+      /succeeded \(HTTP 200\): the write WAS applied/,
+    );
+    const upload = await client.request({
+      method: 'POST',
+      path: '/rest/api/2/issue/DEMO-1/attachments',
+      access: 'write',
+      body: new FormData(),
+    });
+    expect(upload.data).toContain('connection lost / timed out while reading it');
+  });
+
+  it('keeps the may-have-been-applied warning for a write whose non-2xx body times out', async () => {
+    const { client, fetchMock } = setup({ timeoutMs: 20 });
+    fetchMock.mockImplementation(async (_input, init) => {
+      const signal = init?.signal;
+      const stream = new ReadableStream<Uint8Array>({
+        start(controller) {
+          signal?.addEventListener('abort', () => controller.error(signal.reason), { once: true });
+        },
+      });
+      return new Response(stream, { status: 500 });
+    });
+    await expect(client.request(write)).rejects.toThrow(
+      `Jira POST /rest/api/2/issue timed out after 20 ms. The operation ${warning}`,
+    );
   });
 
   it('warns on a connection reset after sending, not on a refused connection', async () => {
@@ -984,5 +1090,9 @@ describe('retryDelayMs — HTTP-date', () => {
     expect(retryDelayMs('Sun, 11 Oct 2026 10:00:05 GMT', 0, now)).toBe(5000);
     expect(retryDelayMs('Sun, 11 Oct 2026 09:00:00 GMT', 0, now)).toBe(0);
     expect(retryDelayMs('Sun, 11 Oct 2026 11:00:00 GMT', 0, now)).toBeUndefined();
+    // Not delta-seconds: 0x10 and 1e1 are not Retry-After values (backoff instead).
+    expect(retryDelayMs('0x10', 0, now)).toBe(500);
+    expect(retryDelayMs('1e1', 0, now)).toBe(500);
+    expect(retryDelayMs('-5', 0, now)).toBe(500);
   });
 });

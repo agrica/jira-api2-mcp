@@ -326,22 +326,22 @@ Exemple :
   - `Retry-After` est lu en secondes ou en date HTTP ; si Jira demande d'attendre plus de 10 s, l'erreur 429 ou 503 est renvoyée sans nouvelle tentative, avec la valeur de `Retry-After` ;
   - sans `Retry-After`, l'attente (0,5 s puis 1 s au plus) est en partie aléatoire, pour que des appels parallèles ne se relancent pas ensemble ;
   - une écriture n'est jamais rejouée.
-- **Annulation.** Si le client MCP annule un appel, la requête Jira en cours est interrompue et n'est pas réessayée. Une écriture déjà reçue par Jira a pu être appliquée : vérifiez son état avant de la relancer.
+- **Annulation.** Si le client MCP annule un appel, la requête Jira en cours est interrompue et n'est pas réessayée. Une écriture déjà reçue par Jira a pu être appliquée : vérifiez son état avant de la relancer. Si Jira avait déjà répondu 2xx, le message dit que l'écriture A été appliquée (« the write WAS applied »).
 - **Écritures à l'issue incertaine.**
-  - Quand une écriture échoue après avoir pu atteindre Jira (délai dépassé, connexion coupée, coupure pendant la réception, annulation, page HTML à la place de JSON), le message se termine par « The operation may already have been applied by Jira: check its state before retrying. » : vérifiez l'état dans Jira avant de relancer.
-  - Une connexion refusée ou impossible à établir (`ECONNREFUSED`, `ENOTFOUND`, certificat) ne porte pas cet avertissement : la requête n'est pas partie.
-  - Quand Jira a répondu 2xx mais que le corps de la réponse est illisible (trop gros ou JSON invalide), l'outil renvoie un succès : « … succeeded (HTTP 201): the write WAS applied, but its response could not be read (…) ». Ne relancez pas l'écriture.
+  - Quand une écriture échoue après avoir pu atteindre Jira, avant toute réponse 2xx (délai dépassé, connexion coupée, annulation, coupure pendant la lecture d'une réponse d'erreur, page HTML à la place de JSON), le message se termine par « The operation may already have been applied by Jira: check its state before retrying. » : vérifiez l'état dans Jira avant de relancer.
+  - Une connexion refusée ou impossible à établir (`ECONNREFUSED`, `ENOTFOUND`, certificat), ou une requête refusée avant l'envoi (port interdit, en-tête invalide), ne porte pas cet avertissement : la requête n'est pas partie.
+  - Quand Jira a répondu 2xx mais que le corps de la réponse est illisible (trop gros, JSON invalide, connexion coupée ou délai dépassé pendant sa lecture), l'outil renvoie un succès : « … succeeded (HTTP 201): the write WAS applied, but its response could not be read (…) ». Ne relancez pas l'écriture.
 - **Réponse HTML.** Une réponse 2xx en HTML là où Jira doit répondre en JSON (page de connexion d'un proxy d'authentification ou d'un SSO) est une erreur, « unexpected HTML response instead of JSON », et non un succès.
 - **Transport.**
   - **HTTPS est exigé par défaut.**
   - Une URL `http://` n'est acceptée qu'avec `JIRA_ALLOW_INSECURE_HTTP=true`, pour des tests locaux exceptionnels. Le serveur affiche alors un avertissement au démarrage, car le PAT circule en clair.
   - Les redirections sont refusées.
-  - Toute requête part vers `<JIRA_BASE_URL>/rest/…` : un chemin qui contient un segment `.` ou `..`, un séparateur encodé (`%2e`, `%2f`, `%5c`), une barre oblique inverse, un `?` ou un `#` est refusé, à la génération du catalogue, à son chargement et à l'envoi de la requête. Une valeur de paramètre de chemin ne peut contenir ni `/` ni `\`.
+  - Toute requête part vers `<JIRA_BASE_URL>/rest/…` : un chemin qui contient un segment `.` ou `..`, un séparateur encodé (`%2e`, `%2f`, `%5c`), une barre oblique inverse, un `;` (Tomcat lit `..;/` comme `..`), un `?` ou un `#` est refusé, à la génération du catalogue, à son chargement et à l'envoi de la requête. Une valeur de paramètre de chemin ne peut contenir ni `/` ni `\`.
 - **Taille.**
   - Au-delà de `JIRA_MAX_RESPONSE_BYTES`, la lecture est interrompue et une erreur est renvoyée.
   - La sortie destinée au modèle est limitée à `JIRA_MAX_OUTPUT_CHARS`, avec la mention « output truncated ».
 - **Secrets et inventaire.**
-  - Le PAT n'est jamais journalisé ni versionné (`npm run secrets:scan`, qui cherche aussi l'hôte de l'instance quand `JIRA_BASE_URL` est défini). Il n'apparaît pas non plus dans les erreurs renvoyées au modèle, dont les adresses IP et les noms de certificat sont retirés.
+  - Le PAT n'est jamais journalisé ni versionné (`npm run secrets:scan`, qui cherche aussi l'hôte de l'instance quand `JIRA_BASE_URL` est défini). Il n'apparaît pas non plus dans les erreurs renvoyées au modèle, même quand une page de proxy le renvoie ; le nom d'hôte de l'instance, les adresses IP et les noms de certificat en sont aussi retirés.
   - L'URL de l'instance n'est pas journalisée au démarrage ; les scripts qui appellent Jira n'affichent qu'une ligne d'erreur nettoyée (sans hôte, adresse IP ni détail de certificat).
   - L'inventaire des endpoints (WADL, `catalog/catalog.json`, rapports) **n'est pas versionné**.
 

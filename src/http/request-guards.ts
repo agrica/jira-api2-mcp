@@ -3,9 +3,13 @@
  * crafted WADL or a tampered catalog is refused at every stage, not only at one of them.
  */
 
-/** Characters that have no business in a REST operation path: query, fragment, backslash, controls, spaces. */
+/**
+ * Characters that have no business in a REST operation path: query, fragment, backslash, controls,
+ * spaces, and `;` (Tomcat strips `;params` from a segment before normalising dot segments, so `..;/`
+ * would traverse; Jira REST paths use no matrix parameters).
+ */
 // oxlint-disable-next-line eslint/no-control-regex -- control characters are exactly what is refused
-const FORBIDDEN_CHARS = /[?#\\\s\u0000-\u001f\u007f]/;
+const FORBIDDEN_CHARS = /[?#;\\\s\u0000-\u001f\u007f]/;
 /** Percent-encoded dot, slash and backslash: URL normalisation or a proxy could turn them into traversal. */
 const ENCODED_SEPARATOR = /%(?:2e|2f|5c)/i;
 
@@ -18,7 +22,7 @@ export function restPathProblem(path: string): string | undefined {
   if (!path.startsWith('/rest/') || path.length === '/rest/'.length)
     return 'it must start with /rest/';
   if (FORBIDDEN_CHARS.test(path))
-    return 'it contains a forbidden character (?, #, \\, whitespace or control character)';
+    return 'it contains a forbidden character (?, #, ;, \\, whitespace or control character)';
   if (ENCODED_SEPARATOR.test(path))
     return 'it contains a percent-encoded dot, slash or backslash (%2e, %2f, %5c)';
   if (path.split('/').some((segment) => segment === '.' || segment === '..'))

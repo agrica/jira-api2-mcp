@@ -66,6 +66,9 @@ describe('loadCatalogFile', () => {
       String.raw`/rest/api/2/..\..\secure\admin`,
       '/rest/api/2/../../../secure/Logout!default.jspa',
       '/rest/api/2/x?os_authType=basic#',
+      '/rest/api/2/..;/..;/..;/secure/admin',
+      '/rest/api/2/.;/x',
+      '/rest/api/2/..;jsessionid=1/secure/admin',
     ]) {
       const bad = { ...valid, operations: [{ ...valid.operations[0], path }] };
       await expect(loadCatalogFile(await tempFile(JSON.stringify(bad)))).rejects.toThrow(

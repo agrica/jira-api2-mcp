@@ -81,9 +81,15 @@ export class ResponseTooLargeError extends Error {
 }
 
 export class RequestCancelledError extends Error {
-  constructor(method: string, path: string, access: AccessClass) {
+  /** `appliedStatus`: the 2xx status Jira had already answered to a write before the cancellation. */
+  constructor(method: string, path: string, access: AccessClass, appliedStatus?: number) {
+    const prefix = `Jira ${method} ${path} cancelled by the MCP client`;
     super(
-      `Jira ${method} ${path} cancelled by the MCP client${access === 'read' ? '' : `. ${WRITE_OUTCOME_UNKNOWN}`}`,
+      access === 'read'
+        ? prefix
+        : appliedStatus === undefined
+          ? `${prefix}. ${WRITE_OUTCOME_UNKNOWN}`
+          : `${prefix} after Jira answered HTTP ${appliedStatus}: the write WAS applied. Do not retry it.`,
     );
     this.name = 'RequestCancelledError';
   }
@@ -132,6 +138,10 @@ function detailsFromJson(body: string): string[] {
   }
 }
 
+/** The character for `code`, or the entity text itself when `code` is not a Unicode code point. */
+const fromCodePoint = (code: number, entity: string) =>
+  code <= 0x10ffff ? String.fromCodePoint(code) : entity;
+
 export function decodeHtmlEntities(text: string): string {
   return text
     .replace(/&lt;/g, '<')
@@ -139,9 +149,9 @@ export function decodeHtmlEntities(text: string): string {
     .replace(/&quot;/g, '"')
     .replace(/&#39;|&apos;/g, "'")
     .replace(/&nbsp;/g, ' ')
-    .replace(/&#(\d+);/g, (_m, code: string) => String.fromCodePoint(Number(code)))
-    .replace(/&#x([0-9a-f]+);/gi, (_m, code: string) =>
-      String.fromCodePoint(Number.parseInt(code, 16)),
+    .replace(/&#(\d+);/g, (entity, code: string) => fromCodePoint(Number(code), entity))
+    .replace(/&#x([0-9a-f]+);/gi, (entity, code: string) =>
+      fromCodePoint(Number.parseInt(code, 16), entity),
     )
     .replace(/&amp;/g, '&');
 }

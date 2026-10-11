@@ -161,6 +161,9 @@ describe('parseWadl', () => {
       String.raw`..\..\..\secure\admin`,
       '../../../secure/Logout!default.jspa',
       'x?os_authType=basic#',
+      '..;/..;/..;/secure/admin',
+      '.;/x',
+      '..;jsessionid=1/secure/admin',
       'a%2Fb',
       './x',
     ])
