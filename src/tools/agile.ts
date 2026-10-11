@@ -1,6 +1,5 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import type { QueryValue } from '../http/jira-client.ts';
 import {
   DEFAULT_ISSUE_FIELDS,
   READ,
@@ -8,6 +7,7 @@ import {
   defineTool,
   issueKeySchema,
   maxResultsSchema,
+  readGet,
   startAtSchema,
   type ToolDeps,
 } from './shared.ts';
@@ -16,8 +16,7 @@ const idSchema = z.number().int().positive();
 
 export function registerAgileTools(server: McpServer, deps: ToolDeps): void {
   const { client } = deps;
-  const get = async (path: string, query?: Readonly<Record<string, QueryValue>>) =>
-    (await client.request({ method: 'GET', path, access: 'read', query })).data;
+  const get = readGet(client);
 
   defineTool(
     server,

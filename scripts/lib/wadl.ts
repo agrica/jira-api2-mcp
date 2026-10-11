@@ -1,4 +1,5 @@
 import { XMLParser } from 'fast-xml-parser';
+import { PATH_PLACEHOLDER } from '../../src/catalog/catalog.ts';
 import type { HttpMethod } from '../../src/http/jira-client.ts';
 import type {
   ApiFamily,
@@ -91,8 +92,37 @@ function docText(docs: XmlDoc[] | undefined): string {
     .slice(0, 400);
 }
 
+/**
+ * Reduces each `{name}` / `{name: regex}` template to `{name}`. Braces are matched with a depth
+ * counter, so a regex constraint may itself contain braces (e.g. `{key: [A-Z]{2,}-\d+}`).
+ * An unbalanced `{` is left as is.
+ */
+export function stripTemplateConstraints(segment: string): string {
+  let out = '';
+  let i = 0;
+  while (i < segment.length) {
+    const open = segment.indexOf('{', i);
+    if (open === -1) break;
+    let depth = 0;
+    let close = -1;
+    for (let j = open; j < segment.length; j++) {
+      if (segment[j] === '{') depth++;
+      else if (segment[j] === '}' && --depth === 0) {
+        close = j;
+        break;
+      }
+    }
+    if (close === -1) break;
+    const inner = segment.slice(open + 1, close);
+    const colon = inner.indexOf(':');
+    out += `${segment.slice(i, open)}{${(colon === -1 ? inner : inner.slice(0, colon)).trim()}}`;
+    i = close + 1;
+  }
+  return out + segment.slice(i);
+}
+
 function joinPath(base: string, segment: string): string {
-  const clean = segment.replace(/\{\s*(\w+)\s*:[^}]*\}/g, '{$1}').replace(/^\/+|\/+$/g, '');
+  const clean = stripTemplateConstraints(segment).replace(/^\/+|\/+$/g, '');
   return clean ? `${base}/${clean}` : base;
 }
 
@@ -110,7 +140,7 @@ function toQueryParam(p: XmlParam): OperationParam {
 }
 
 function pathParams(path: string, templateTypes: ReadonlyMap<string, ParamType>): OperationParam[] {
-  return [...path.matchAll(/\{(\w+)\}/g)].map((m) => {
+  return [...path.matchAll(PATH_PLACEHOLDER)].map((m) => {
     const name = m[1] ?? '';
     return {
       name,

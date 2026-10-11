@@ -8,7 +8,7 @@ describe('issue read tools', () => {
     await h.close();
   });
 
-  it('work with writes disabled and send accented JQL with default fields', async () => {
+  it('work with writes disabled and POST accented JQL with default fields', async () => {
     h = await createToolHarness(registerIssueReadTools);
     h.fetchMock.mockResolvedValueOnce(
       jsonResponse({ startAt: 0, maxResults: 25, total: 1, issues: [{ key: 'DEMO-1' }] }),
@@ -19,14 +19,47 @@ describe('issue read tools', () => {
     expect(result.isError).toBe(false);
     expect(JSON.parse(result.text)).toMatchObject({ total: 1 });
     const req = h.request();
-    expect(req.method).toBe('GET');
+    expect(req.method).toBe('POST');
     expect(req.url.pathname).toBe('/rest/api/2/search');
-    expect(req.url.searchParams.get('jql')).toBe('project = DEMO AND status = "Fermée"');
-    expect(req.url.search).toContain('Ferm%C3%A9e');
-    expect(req.url.searchParams.get('fields')).toBe(
-      'summary,status,assignee,reporter,priority,issuetype,created,updated',
-    );
-    expect(req.url.searchParams.get('maxResults')).toBe('25');
+    expect(req.url.search).toBe('');
+    expect(req.headers['Content-Type']).toBe('application/json');
+    expect(req.body).toEqual({
+      jql: 'project = DEMO AND status = "Fermée"',
+      startAt: 0,
+      maxResults: 25,
+      fields: [
+        'summary',
+        'status',
+        'assignee',
+        'reporter',
+        'priority',
+        'issuetype',
+        'created',
+        'updated',
+      ],
+    });
+  });
+
+  it('jira_search_issues splits expand into an array and is retried as a read', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    h.fetchMock
+      .mockResolvedValueOnce(new Response('busy', { status: 503 }))
+      .mockResolvedValueOnce(jsonResponse({ total: 0, issues: [] }));
+    const result = await h.call('jira_search_issues', {
+      jql: 'project = DEMO',
+      fields: [],
+      expand: ' renderedFields, ,changelog ,',
+      startAt: 10,
+      maxResults: 5,
+    });
+    expect(result.isError).toBe(false);
+    expect(h.fetchMock).toHaveBeenCalledTimes(2);
+    expect(h.request(1).body).toEqual({
+      jql: 'project = DEMO',
+      startAt: 10,
+      maxResults: 5,
+      expand: ['renderedFields', 'changelog'],
+    });
   });
 
   it('jira_search_issues marks oversized output as truncated', async () => {
@@ -36,7 +69,7 @@ describe('issue read tools', () => {
     );
     const result = await h.call('jira_search_issues', { jql: 'project = DEMO', fields: ['*all'] });
     expect(result.text).toContain('[output truncated for the model:');
-    expect(h.request().url.searchParams.get('fields')).toBe('*all');
+    expect((h.request().body as { fields: string[] }).fields).toEqual(['*all']);
   });
 
   it('jira_get_issue normalises the key and forwards fields/expand', async () => {

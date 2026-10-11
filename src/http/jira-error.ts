@@ -9,11 +9,14 @@ export class JiraApiError extends Error {
     path: string,
     details: string[],
     retryAfter: string | null = null,
+    note?: string,
   ) {
     const suffix = details.length > 0 ? `: ${details.join(' | ')}` : '';
     const rate =
       status === 429 ? ` — rate limited${retryAfter ? ` (Retry-After: ${retryAfter} s)` : ''}` : '';
-    super(`Jira ${method} ${path} failed with HTTP ${status}${suffix}${rate}`);
+    super(
+      `Jira ${method} ${path} failed with HTTP ${status}${suffix}${rate}${note ? ` — ${note}` : ''}`,
+    );
     this.name = 'JiraApiError';
     this.status = status;
     this.details = details;

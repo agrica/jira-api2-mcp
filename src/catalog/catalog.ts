@@ -22,6 +22,12 @@ export interface CallArguments {
   body?: unknown;
 }
 
+/**
+ * A path placeholder of a catalog operation, e.g. `{issueIdOrKey}`, `{issue-key}` or `{a.b}`.
+ * Shared with the WADL parser so that extracted parameter names are exactly the ones substituted here.
+ */
+export const PATH_PLACEHOLDER = /\{([\w.-]+)\}/g;
+
 export class CatalogError extends Error {
   constructor(message: string) {
     super(message);
@@ -134,7 +140,7 @@ export class Catalog {
         `Unknown path parameter(s) for ${op.id}: ${unknownPath.join(', ')}. Expected: ${declaredPath.map((p) => p.name).join(', ') || 'none'}`,
       );
     }
-    const path = op.path.replace(/\{(\w+)\}/g, (_match, name: string) => {
+    const path = op.path.replace(PATH_PLACEHOLDER, (_match, name: string) => {
       const param: OperationParam = declaredPath.find((p) => p.name === name) ?? {
         name,
         in: 'path',

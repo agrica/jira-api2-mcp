@@ -6,11 +6,25 @@ import type {
 } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { runWithCancellation } from '../http/cancellation.ts';
-import type { JiraClient } from '../http/jira-client.ts';
+import type { JiraClient, QueryValue } from '../http/jira-client.ts';
 
 export interface ToolDeps {
   client: JiraClient;
   maxOutputChars: number;
+}
+
+/** Encodes one path segment. */
+export const enc = encodeURIComponent;
+
+/** Joins values with commas; `undefined` for a missing or empty list (so the parameter is omitted). */
+export function join(values: readonly string[] | undefined): string | undefined {
+  return values && values.length > 0 ? values.join(',') : undefined;
+}
+
+/** GET helper for read tools: `access: 'read'` (allowed in read-only mode, retried). */
+export function readGet(client: JiraClient) {
+  return async (path: string, query?: Readonly<Record<string, QueryValue>>): Promise<unknown> =>
+    (await client.request({ method: 'GET', path, access: 'read', query })).data;
 }
 
 export const DEFAULT_ISSUE_FIELDS: readonly string[] = [

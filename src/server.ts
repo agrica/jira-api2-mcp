@@ -20,7 +20,7 @@ function instructions(deps: ServerDeps): string {
       : 'This server is READ-ONLY: write tools are not available.',
     'Prefer the dedicated jira_* tools. Otherwise find an operation with jira_list_operations, check it with jira_describe_operation,',
     'then call it with jira_call_read_operation (or jira_call_write_operation when writes are enabled).',
-    'The catalog covers REST API v2, Agile 1.0 and Xray as described by the instance WADL only.',
+    'The catalog covers REST API v2, Agile 1.0 and Xray (if installed) as described by the instance WADL only.',
     'Custom field ids (customfield_NNNNN) can be looked up with jira_list_fields.',
   ].join(' ');
 }

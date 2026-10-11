@@ -1,7 +1,13 @@
 import { readFile } from 'node:fs/promises';
 import { isDeepStrictEqual } from 'node:util';
 import type { AccessDecisions, CatalogFile } from '../src/catalog/types.ts';
-import { buildCatalog, compareWithLock, missingWadlFiles, verifyFiles } from './lib/build.ts';
+import {
+  buildCatalog,
+  compareWithLock,
+  emptyFamilies,
+  missingWadlFiles,
+  verifyFiles,
+} from './lib/build.ts';
 import { describeDiff, diffOperations } from './lib/diff.ts';
 import {
   CATALOG_JSON,
@@ -71,9 +77,10 @@ if (pending.length > 0) {
   );
 }
 problems.push(...compareWithLock(meta, catalog, lock));
-for (const family of ['api', 'agile', 'xray'] as const) {
-  if (catalog.meta.counts[family] === 0) problems.push(`No operation for the "${family}" family`);
-}
+// Absent optional sources (e.g. Xray not installed) are recorded in the lock: their appearance
+// or disappearance is reported by compareWithLock, not here.
+for (const family of emptyFamilies(meta, catalog))
+  problems.push(`No operation for the "${family}" family`);
 
 if (problems.length > 0) {
   for (const p of problems) console.error(`✖ ${p}`);

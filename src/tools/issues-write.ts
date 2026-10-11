@@ -8,12 +8,16 @@ import {
   WRITE,
   WRITE_IDEMPOTENT,
   defineTool,
+  enc,
   issueKeySchema,
   projectKeySchema,
   type ToolDeps,
 } from './shared.ts';
 
-const enc = encodeURIComponent;
+/** Jira duration: one or more `<number><unit>` groups, decimals allowed (e.g. "1.5h", "2h 30m", "1w 2d"). */
+const DURATION = /^\s*(?:\d+(?:\.\d+)?[wdhm]\s*)+$/;
+/** A numeric issue reference is an issue id, anything else an issue key. */
+const issueRef = (keyOrId: string) => (/^\d+$/.test(keyOrId) ? { id: keyOrId } : { key: keyOrId });
 const fieldMapSchema = z
   .record(z.string(), z.unknown())
   .describe(
@@ -56,7 +60,8 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
           project: { key: projectKey },
           issuetype: { name: issueType },
           summary,
-          description,
+          // Only override fields.description when the top-level parameter is given.
+          ...(description === undefined ? {} : { description }),
         },
       }),
   );
@@ -159,7 +164,7 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
         issueKey: issueKeySchema,
         timeSpent: z
           .string()
-          .regex(/^\s*(\d+[wdhm]\s*)+$/, 'Expected a Jira duration such as "1h 30m" or "2d"'),
+          .regex(DURATION, 'Expected a Jira duration such as "1h 30m", "1.5h" or "2d"'),
         started: z.string().optional(),
         comment: z.string().optional(),
       }),
@@ -188,8 +193,8 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
     async ({ linkType, inwardIssue, outwardIssue, comment }) =>
       send('POST', '/rest/api/2/issueLink', {
         type: { name: linkType },
-        inwardIssue: { key: inwardIssue },
-        outwardIssue: { key: outwardIssue },
+        inwardIssue: issueRef(inwardIssue),
+        outwardIssue: issueRef(outwardIssue),
         comment: comment ? { body: comment } : undefined,
       }),
   );

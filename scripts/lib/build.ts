@@ -80,6 +80,38 @@ export function buildCatalog(input: {
   };
 }
 
+/** Families that must have operations: api and agile always, others when their source is present. */
+const ALWAYS_REQUIRED: ReadonlySet<ApiFamily> = new Set(['api', 'agile']);
+const FAMILIES: readonly ApiFamily[] = ['api', 'agile', 'xray'];
+
+/** Families without any operation although they are required (absent optional sources are fine). */
+export function emptyFamilies(meta: FetchMeta, catalog: CatalogFile): ApiFamily[] {
+  const present = new Set(meta.sources.map((s) => s.api));
+  return FAMILIES.filter(
+    (f) => (ALWAYS_REQUIRED.has(f) || present.has(f)) && catalog.meta.counts[f] === 0,
+  );
+}
+
+/** Source drift: a WADL whose sha256 changed, appeared (e.g. plugin installed) or disappeared. */
+export function compareSourcesWithLock(
+  meta: Pick<FetchMeta, 'sources'>,
+  lock: Pick<SourceLock, 'sources'>,
+): string[] {
+  const problems: string[] = [];
+  for (const s of meta.sources) {
+    const locked = lock.sources.find((l) => l.file === s.file);
+    if (!locked)
+      problems.push(`WADL ${s.file} is present but absent from catalog/source-lock.json`);
+    else if (locked.sha256 !== s.sha256)
+      problems.push(`WADL ${s.file} differs from catalog/source-lock.json (sha256)`);
+  }
+  for (const l of lock.sources) {
+    if (!meta.sources.some((s) => s.file === l.file))
+      problems.push(`WADL ${l.file} recorded in catalog/source-lock.json is now absent`);
+  }
+  return problems;
+}
+
 export function compareWithLock(meta: FetchMeta, catalog: CatalogFile, lock: SourceLock): string[] {
   const problems: string[] = [];
   if (meta.jiraVersion !== lock.jiraVersion || meta.jiraBuildNumber !== lock.jiraBuildNumber) {
@@ -87,11 +119,7 @@ export function compareWithLock(meta: FetchMeta, catalog: CatalogFile, lock: Sou
       `Jira version/build differs from catalog/source-lock.json: ${meta.jiraVersion} (${meta.jiraBuildNumber}) vs ${lock.jiraVersion} (${lock.jiraBuildNumber})`,
     );
   }
-  for (const s of meta.sources) {
-    if (lock.sources.find((l) => l.file === s.file)?.sha256 !== s.sha256) {
-      problems.push(`WADL ${s.file} differs from catalog/source-lock.json (sha256)`);
-    }
-  }
+  problems.push(...compareSourcesWithLock(meta, lock));
   const { counts } = catalog.meta;
   if (
     counts.api !== lock.counts.api ||

@@ -1,13 +1,15 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import type { QueryValue } from '../http/jira-client.ts';
 import {
   DEFAULT_ISSUE_FIELDS,
   READ,
   defineTool,
+  enc,
   issueKeySchema,
+  join,
   maxResultsSchema,
   projectKeySchema,
+  readGet,
   startAtSchema,
   type ToolDeps,
 } from './shared.ts';
@@ -17,14 +19,10 @@ const fieldsSchema = z
   .describe(
     'Fields to return, e.g. ["summary","status","customfield_10001"]. ["*all"] returns every field (large).',
   );
-const enc = encodeURIComponent;
-const join = (values: readonly string[] | undefined) =>
-  values && values.length > 0 ? values.join(',') : undefined;
 
 export function registerIssueReadTools(server: McpServer, deps: ToolDeps): void {
   const { client } = deps;
-  const get = async (path: string, query?: Readonly<Record<string, QueryValue>>) =>
-    (await client.request({ method: 'GET', path, access: 'read', query })).data;
+  const get = readGet(client);
 
   defineTool(
     server,
@@ -43,8 +41,23 @@ export function registerIssueReadTools(server: McpServer, deps: ToolDeps): void 
       }),
       annotations: READ,
     },
-    async ({ jql, fields, expand, startAt, maxResults }) =>
-      get('/rest/api/2/search', { jql, fields: join(fields), expand, startAt, maxResults }),
+    async ({ jql, fields, expand, startAt, maxResults }) => {
+      // POST keeps long JQL out of the URL (proxy/URL length limits); it is still a read.
+      const expandList = (expand ?? '')
+        .split(',')
+        .map((e) => e.trim())
+        .filter((e) => e !== '');
+      const body = {
+        jql,
+        startAt,
+        maxResults,
+        fields: fields.length > 0 ? fields : undefined,
+        expand: expandList.length > 0 ? expandList : undefined,
+      };
+      return (
+        await client.request({ method: 'POST', path: '/rest/api/2/search', access: 'read', body })
+      ).data;
+    },
   );
 
   defineTool(

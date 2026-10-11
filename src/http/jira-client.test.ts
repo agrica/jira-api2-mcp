@@ -541,10 +541,90 @@ describe('JiraClient.request — aborts during the body read', () => {
 });
 
 describe('retryDelayMs', () => {
-  it('uses Retry-After seconds, capped at 10 s, else exponential backoff', () => {
+  it('uses Retry-After seconds up to the 10 s cap, else exponential backoff (capped)', () => {
     expect(retryDelayMs('2', 0)).toBe(2000);
-    expect(retryDelayMs('120', 0)).toBe(10_000);
+    expect(retryDelayMs('10', 0)).toBe(10_000);
     expect(retryDelayMs(null, 0)).toBe(500);
+    expect(retryDelayMs('', 1)).toBe(retryDelayMs(null, 1));
+    expect(retryDelayMs('  ', 1)).toBe(retryDelayMs(null, 1));
     expect(retryDelayMs('soon', 1)).toBe(1000);
+    expect(retryDelayMs(null, 10)).toBe(10_000);
+  });
+
+  it('returns undefined when Retry-After asks for more than the cap (do not retry early)', () => {
+    expect(retryDelayMs('11', 0)).toBeUndefined();
+    expect(retryDelayMs('120', 0)).toBeUndefined();
+  });
+});
+
+describe('JiraClient.request — Retry-After above the cap', () => {
+  it('surfaces the 429 without retrying when Retry-After exceeds the cap', async () => {
+    const { client, fetchMock, sleep } = setup();
+    fetchMock.mockResolvedValueOnce(
+      new Response('slow down', { status: 429, headers: { 'retry-after': '120' } }),
+    );
+    const error = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => e);
+    expect(error).toBeInstanceOf(JiraApiError);
+    expect((error as JiraApiError).status).toBe(429);
+    expect((error as Error).message).toContain('Retry-After 120 s exceeds the retry cap');
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('still retries when Retry-After is at the cap', async () => {
+    const { client, fetchMock, sleep } = setup();
+    fetchMock
+      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '10' } }))
+      .mockResolvedValueOnce(json({ ok: true }));
+    await client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' });
+    expect(sleep).toHaveBeenCalledWith(10_000, undefined);
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+  });
+});
+
+/** 200 response whose body sends one chunk then fails like a dropped connection (undici: TypeError "terminated"). */
+const brokenBody = () =>
+  new Response(
+    new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.enqueue(new TextEncoder().encode('{"par'));
+      },
+      pull(controller) {
+        controller.error(new TypeError('terminated', { cause: new Error('ECONNRESET') }));
+      },
+    }),
+    { headers: { 'content-type': 'application/json' } },
+  );
+
+describe('JiraClient.request — network errors during the body read', () => {
+  it('retries a read whose body fails mid-stream, within the retry budget', async () => {
+    const { client, fetchMock, sleep } = setup();
+    fetchMock.mockResolvedValueOnce(brokenBody()).mockResolvedValueOnce(json({ ok: true }));
+    const res = await client.request({ method: 'GET', path: '/rest/api/2/field', access: 'read' });
+    expect(res.data).toEqual({ ok: true });
+    expect(fetchMock).toHaveBeenCalledTimes(2);
+    expect(sleep).toHaveBeenCalledOnce();
+  });
+
+  it('gives up after maxRetries with a readable error', async () => {
+    const { client, fetchMock } = setup({ maxRetries: 2 });
+    fetchMock.mockImplementation(async () => brokenBody());
+    await expect(
+      client.request({ method: 'GET', path: '/rest/api/2/field', access: 'read' }),
+    ).rejects.toThrow('Jira GET /rest/api/2/field failed while reading the response: terminated');
+    expect(fetchMock).toHaveBeenCalledTimes(3);
+  });
+
+  it('never retries a write whose body fails mid-stream', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock.mockResolvedValueOnce(brokenBody()).mockResolvedValueOnce(json({ id: '1' }));
+    await expect(
+      client.request({ method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} }),
+    ).rejects.toThrow(
+      'failed while reading the response: terminated (the write may already have been applied by Jira)',
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
   });
 });

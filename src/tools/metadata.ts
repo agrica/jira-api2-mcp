@@ -1,8 +1,15 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
-import type { QueryValue } from '../http/jira-client.ts';
 import { normalizeForSearch } from '../util/normalize.ts';
-import { READ, defineTool, maxResultsSchema, projectKeySchema, type ToolDeps } from './shared.ts';
+import {
+  READ,
+  defineTool,
+  enc,
+  maxResultsSchema,
+  projectKeySchema,
+  readGet,
+  type ToolDeps,
+} from './shared.ts';
 
 interface JiraProject {
   id: string;
@@ -17,12 +24,9 @@ interface JiraField {
   schema?: { type?: string; custom?: string };
 }
 
-const enc = encodeURIComponent;
-
 export function registerMetadataTools(server: McpServer, deps: ToolDeps): void {
   const { client } = deps;
-  const get = async (path: string, query?: Readonly<Record<string, QueryValue>>) =>
-    (await client.request({ method: 'GET', path, access: 'read', query })).data;
+  const get = readGet(client);
   const noInput = z.object({});
 
   defineTool(

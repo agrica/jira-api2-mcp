@@ -133,6 +133,27 @@ describe('Catalog.buildRequest — path parameters', () => {
   });
 });
 
+describe('Catalog.buildRequest — template names with "-" and "."', () => {
+  it('substitutes {issue-key} and {a.b} placeholders', () => {
+    const op: Operation = {
+      ...base,
+      id: 'GET /rest/demo/1.0/issue/{issue-key}/{a.b}',
+      api: 'api',
+      method: 'GET',
+      path: '/rest/demo/1.0/issue/{issue-key}/{a.b}',
+      access: 'read',
+      params: [
+        { name: 'issue-key', in: 'path', type: 'string', required: true, repeating: false },
+        { name: 'a.b', in: 'path', type: 'integer', required: true, repeating: false },
+      ],
+    };
+    expect(
+      new Catalog([op]).buildRequest(op, { pathParams: { 'issue-key': 'DEMO-1', 'a.b': 10001 } })
+        .path,
+    ).toBe('/rest/demo/1.0/issue/DEMO-1/10001');
+  });
+});
+
 describe('Catalog.buildRequest — query parameters', () => {
   it('checks declared names, types, repeatability and declared required params', () => {
     const ok = { pathParams: { boardId: 330 } };

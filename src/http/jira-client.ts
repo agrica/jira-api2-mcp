@@ -54,10 +54,24 @@ export function isRetryable(req: JiraRequest): boolean {
   return req.access === 'read' && !(req.body instanceof FormData);
 }
 
-export function retryDelayMs(retryAfter: string | null, attempt: number): number {
-  const seconds = retryAfter === null ? Number.NaN : Number(retryAfter);
-  const waitMs = Number.isFinite(seconds) && seconds >= 0 ? seconds * 1000 : 500 * 2 ** attempt;
-  return Math.min(waitMs, MAX_RETRY_DELAY_MS);
+/**
+ * Delay before the next retry: the server's Retry-After (seconds) when valid, else exponential backoff
+ * capped at MAX_RETRY_DELAY_MS. Returns `undefined` when Retry-After asks for longer than the cap:
+ * retrying earlier than the server asked would be pointless, so the caller gives up instead.
+ */
+export function retryDelayMs(retryAfter: string | null, attempt: number): number | undefined {
+  // Number('') is 0: a blank header must fall back to the backoff, not mean "retry now".
+  const seconds = retryAfter?.trim() ? Number(retryAfter) : Number.NaN;
+  if (Number.isFinite(seconds) && seconds >= 0) {
+    const waitMs = seconds * 1000;
+    return waitMs > MAX_RETRY_DELAY_MS ? undefined : waitMs;
+  }
+  return backoffMs(attempt);
+}
+
+/** Backoff delay when there is no Retry-After header (always defined). */
+function backoffMs(attempt: number): number {
+  return Math.min(500 * 2 ** attempt, MAX_RETRY_DELAY_MS);
 }
 
 function parseBody(text: string, contentType: string | null): unknown {
@@ -160,13 +174,19 @@ export class JiraClient {
         );
       } catch (error) {
         if (!canRetry || error instanceof RequestCancelledError) throw error;
-        await this.#pause(retryDelayMs(null, attempt), req, cancel);
+        await this.#pause(backoffMs(attempt), req, cancel);
         continue;
       }
+      let note: string | undefined;
       if (canRetry && RETRYABLE_STATUS.has(res.status)) {
-        await res.body?.cancel();
-        await this.#pause(retryDelayMs(res.headers.get('retry-after'), attempt), req, cancel);
-        continue;
+        const retryAfter = res.headers.get('retry-after');
+        const waitMs = retryDelayMs(retryAfter, attempt);
+        if (waitMs !== undefined) {
+          await res.body?.cancel();
+          await this.#pause(waitMs, req, cancel);
+          continue;
+        }
+        note = `Retry-After ${retryAfter} s exceeds the retry cap (${MAX_RETRY_DELAY_MS / 1000} s): not retried`;
       }
       const contentType = res.headers.get('content-type');
       let text: string;
@@ -180,8 +200,12 @@ export class JiraClient {
           timeout,
         );
       } catch (error) {
-        if (canRetry && error instanceof RequestTimeoutError) {
-          await this.#pause(retryDelayMs(null, attempt), req, cancel);
+        // Cancellation and size limit are final; timeouts and network errors mid-body are retried
+        // for reads, like the same failure during fetch (writes never are).
+        if (error instanceof RequestCancelledError || error instanceof ResponseTooLargeError)
+          throw error;
+        if (canRetry) {
+          await this.#pause(backoffMs(attempt), req, cancel);
           continue;
         }
         throw error;
@@ -193,6 +217,7 @@ export class JiraClient {
           req.path,
           extractErrorDetails(text, contentType),
           res.headers.get('retry-after'),
+          note,
         );
       }
       return { status: res.status, data: parseBody(text, contentType) };
@@ -249,7 +274,15 @@ export class JiraClient {
       if (cancel?.aborted) throw new RequestCancelledError(req.method, req.path, req.access);
       if (timeout.aborted)
         throw new RequestTimeoutError(req.method, req.path, this.#timeoutMs, error);
-      throw error;
+      const message = error instanceof Error ? error.message : String(error);
+      const applied =
+        req.access === 'read' ? '' : ' (the write may already have been applied by Jira)';
+      throw new Error(
+        `Jira ${req.method} ${req.path} failed while reading the response: ${message}${applied}`,
+        {
+          cause: error,
+        },
+      );
     }
   }
 

@@ -2,6 +2,7 @@ import { describe, expect, it } from 'vitest';
 import {
   buildCatalog,
   compareWithLock,
+  emptyFamilies,
   formatReview,
   makeLock,
   missingWadlFiles,
@@ -49,8 +50,17 @@ const meta = (overrides: Partial<FetchMeta> = {}): FetchMeta => ({
       bytes: 1,
     },
   ],
+  absent: [],
   ...overrides,
 });
+/** Fetch meta of an instance without the Xray plugin (its WADL answered 404). */
+const metaWithoutXray = (overrides: Partial<FetchMeta> = {}): FetchMeta =>
+  meta({
+    sources: meta().sources.filter((s) => s.api !== 'xray'),
+    absent: ['xray.wadl'],
+    ...overrides,
+  });
+const XML_WITHOUT_XRAY = new Map([...XML].filter(([file]) => file !== 'xray.wadl'));
 const searchDecision = {
   'POST /rest/api/2/search': {
     access: 'read',
@@ -163,6 +173,65 @@ describe('source lock', () => {
     expect(compareWithLock(changedFile, catalog, lock)).toEqual([
       'WADL xray.wadl differs from catalog/source-lock.json (sha256)',
     ]);
+  });
+});
+
+describe('optional Xray source', () => {
+  const { catalog } = buildCatalog({
+    xml: XML_WITHOUT_XRAY,
+    decisions: searchDecision,
+    meta: metaWithoutXray(),
+    generatedAt: 'G',
+  });
+  const diff = { added: catalog.operations.map((o) => o.id), removed: [], changed: [] };
+  const lock = makeLock(metaWithoutXray(), catalog, undefined, diff, 'R');
+
+  it('builds, locks and verifies without the xray source (counts.xray = 0)', () => {
+    expect(catalog.meta.counts).toEqual({ api: 1, agile: 1, xray: 0 });
+    expect(() => verifyFiles(metaWithoutXray(), XML_WITHOUT_XRAY)).not.toThrow();
+    expect(missingWadlFiles(metaWithoutXray(), XML_WITHOUT_XRAY)).toEqual([]);
+    expect(lock.sources.map((s) => s.file)).toEqual(['api.wadl', 'agile.wadl']);
+    expect(lock.absent).toEqual(['xray.wadl']);
+    expect(compareWithLock(metaWithoutXray(), catalog, lock)).toEqual([]);
+  });
+
+  it('requires operations only for families whose source is present (api and agile always)', () => {
+    expect(emptyFamilies(metaWithoutXray(), catalog)).toEqual([]);
+    const full = buildCatalog({
+      xml: XML,
+      decisions: searchDecision,
+      meta: meta(),
+      generatedAt: 'G',
+    });
+    expect(emptyFamilies(meta(), full.catalog)).toEqual([]);
+    const noXrayOps = {
+      ...full.catalog,
+      meta: { ...full.catalog.meta, counts: { api: 1, agile: 1, xray: 0 } },
+    };
+    expect(emptyFamilies(meta(), noXrayOps)).toEqual(['xray']);
+    const nothing = {
+      ...catalog,
+      meta: { ...catalog.meta, counts: { api: 0, agile: 0, xray: 0 } },
+    };
+    expect(emptyFamilies(metaWithoutXray({ sources: [] }), nothing)).toEqual(['api', 'agile']);
+  });
+
+  it('detects xray appearing or disappearing as drift', () => {
+    const full = buildCatalog({
+      xml: XML,
+      decisions: searchDecision,
+      meta: meta(),
+      generatedAt: 'G',
+    });
+    const fullLock = makeLock(meta(), full.catalog, undefined, diff, 'R');
+    expect(compareWithLock(meta(), full.catalog, lock)).toEqual(
+      expect.arrayContaining([
+        'WADL xray.wadl is present but absent from catalog/source-lock.json',
+      ]),
+    );
+    expect(compareWithLock(metaWithoutXray(), catalog, fullLock)).toEqual(
+      expect.arrayContaining(['WADL xray.wadl recorded in catalog/source-lock.json is now absent']),
+    );
   });
 });
 

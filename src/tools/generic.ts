@@ -29,7 +29,7 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
     'jira_list_operations',
     {
       title: 'List Jira REST operations',
-      description: `Search the ${catalog.size} operations described by the ${source} for REST API v2, Agile 1.0 and Xray (other REST families are not covered). All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); "not individually reviewed" in its reason means the class comes from the HTTP method only.`,
+      description: `Search the ${catalog.size} operations described by the ${source} for REST API v2, Agile 1.0 and Xray if installed (other REST families are not covered). All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); "not individually reviewed" in its reason means the class comes from the HTTP method only.`,
       inputSchema: z.object({
         query: z
           .string()

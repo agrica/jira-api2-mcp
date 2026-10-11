@@ -109,4 +109,43 @@ describe('parseWadl', () => {
     );
     expect(parseWadl(noRest, 'api').map((o) => o.id)).toContain('POST /jira/issue');
   });
+
+  it('handles template names with "-" or "." and regex constraints with nested braces', () => {
+    const xml = `<?xml version="1.0"?>
+<application xmlns="http://wadl.dev.java.net/2009/02">
+  <resources base="https://jira.example.com/rest/demo/1.0/">
+    <resource path="issue/{issue-key}">
+      <param name="issue-key" style="template" type="xs:string"/>
+      <method id="a" name="GET"/>
+      <resource path="{a.b}/x">
+        <param name="a.b" style="template" type="xs:long"/>
+        <method id="b" name="GET"/>
+      </resource>
+    </resource>
+    <resource path="key/{key: [A-Z]{2,}-\\d+}/{ id : \\d{1,9} }">
+      <method id="c" name="GET"/>
+    </resource>
+    <resource path="broken/{oops">
+      <method id="d" name="GET"/>
+    </resource>
+  </resources>
+</application>`;
+    const parsed = parseWadl(xml, 'api');
+    expect(parsed.map((o) => o.id)).toEqual([
+      'GET /rest/demo/1.0/broken/{oops',
+      'GET /rest/demo/1.0/issue/{issue-key}',
+      'GET /rest/demo/1.0/issue/{issue-key}/{a.b}/x',
+      'GET /rest/demo/1.0/key/{key}/{id}',
+    ]);
+    const find = (id: string) => parsed.find((o) => o.id === id);
+    expect(find('GET /rest/demo/1.0/issue/{issue-key}/{a.b}/x')?.params).toEqual([
+      { name: 'issue-key', in: 'path', type: 'string', required: true, repeating: false },
+      { name: 'a.b', in: 'path', type: 'integer', required: true, repeating: false },
+    ]);
+    expect(find('GET /rest/demo/1.0/key/{key}/{id}')?.params.map((p) => p.name)).toEqual([
+      'key',
+      'id',
+    ]);
+    expect(find('GET /rest/demo/1.0/broken/{oops')?.params).toEqual([]);
+  });
 });

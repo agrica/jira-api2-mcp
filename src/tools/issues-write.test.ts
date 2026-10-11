@@ -1,3 +1,4 @@
+/* oxlint-disable eslint/no-await-in-loop -- some cases call tools sequentially on purpose (shared mock) */
 import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
@@ -67,6 +68,41 @@ describe('issue write tools', () => {
         },
       },
     });
+  });
+
+  it('jira_create_issue keeps fields.description when the top-level param is absent', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ id: '1', key: 'DEMO-3' }, 201));
+    await h.call('jira_create_issue', {
+      projectKey: 'DEMO',
+      issueType: 'Task',
+      summary: 'x',
+      fields: { description: 'from fields' },
+    });
+    const fields = (h.request().body as { fields: Record<string, unknown> }).fields;
+    expect(fields.description).toBe('from fields');
+  });
+
+  it('jira_create_issue lets the top-level description win over fields.description', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ id: '1', key: 'DEMO-4' }, 201));
+    await h.call('jira_create_issue', {
+      projectKey: 'DEMO',
+      issueType: 'Task',
+      summary: 'x',
+      description: 'top-level',
+      fields: { description: 'from fields' },
+    });
+    const fields = (h.request().body as { fields: Record<string, unknown> }).fields;
+    expect(fields.description).toBe('top-level');
+  });
+
+  it('jira_create_issue omits description when none is given', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ id: '1', key: 'DEMO-5' }, 201));
+    await h.call('jira_create_issue', { projectKey: 'DEMO', issueType: 'Task', summary: 'x' });
+    const fields = (h.request().body as { fields: Record<string, unknown> }).fields;
+    expect('description' in fields).toBe(false);
   });
 
   it('jira_create_issue is never retried and surfaces Jira field errors', async () => {
@@ -160,10 +196,31 @@ describe('issue write tools', () => {
 
   it('jira_add_worklog rejects malformed durations', async () => {
     h = await createToolHarness(registerIssueWriteTools, enabled);
-    expect(
-      (await h.call('jira_add_worklog', { issueKey: 'DEMO-1', timeSpent: 'deux heures' })).isError,
-    ).toBe(true);
+    const invalid = ['deux heures', 'abc', '1.5', 'h', '', '   ', '.5h', '1.h'];
+    const results: Record<string, boolean> = {};
+    for (const timeSpent of invalid) {
+      results[timeSpent] = (
+        await h.call('jira_add_worklog', { issueKey: 'DEMO-1', timeSpent })
+      ).isError;
+    }
+    expect(results).toEqual(Object.fromEntries(invalid.map((d) => [d, true])));
     expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('jira_add_worklog accepts decimal and multi-unit durations', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    const durations = ['1.5h', '0.5d', '2h 30m', '1w 2d', '3m'];
+    const results: Record<string, boolean> = {};
+    for (const timeSpent of durations) {
+      h.fetchMock.mockResolvedValueOnce(jsonResponse({ id: '20' }, 201));
+      results[timeSpent] = (
+        await h.call('jira_add_worklog', { issueKey: 'DEMO-1', timeSpent })
+      ).isError;
+    }
+    expect(results).toEqual(Object.fromEntries(durations.map((d) => [d, false])));
+    durations.forEach((timeSpent, i) => {
+      expect(h.request(i).body).toEqual({ timeSpent });
+    });
   });
 
   it('jira_link_issues posts an issueLink', async () => {
@@ -180,6 +237,31 @@ describe('issue write tools', () => {
       inwardIssue: { key: 'DEMO-1' },
       outwardIssue: { key: 'OTHER-7' },
       comment: { body: 'lié' },
+    });
+  });
+
+  it('jira_link_issues sends numeric issue ids as ids, keys as keys', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));
+    await h.call('jira_link_issues', {
+      linkType: 'Blocks',
+      inwardIssue: '10001',
+      outwardIssue: 'DEMO-2',
+    });
+    expect(h.request().body).toEqual({
+      type: { name: 'Blocks' },
+      inwardIssue: { id: '10001' },
+      outwardIssue: { key: 'DEMO-2' },
+    });
+    h.fetchMock.mockResolvedValueOnce(new Response(null, { status: 201 }));
+    await h.call('jira_link_issues', {
+      linkType: 'Blocks',
+      inwardIssue: 'DEMO-3',
+      outwardIssue: '10002',
+    });
+    expect(h.request(1).body).toMatchObject({
+      inwardIssue: { key: 'DEMO-3' },
+      outwardIssue: { id: '10002' },
     });
   });
 
