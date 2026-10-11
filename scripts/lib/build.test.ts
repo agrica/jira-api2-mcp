@@ -1,12 +1,16 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import {
   buildCatalog,
   compareWithLock,
+  diffAgainstBaseline,
+  formatBaselineDiff,
   emptyFamilies,
   formatReview,
   makeLock,
   missingWadlFiles,
   operationsDigest,
+  sameLockContent,
+  selectBaseline,
   sha256,
   verifyFiles,
 } from './build.ts';
@@ -151,7 +155,7 @@ describe('source lock', () => {
     meta: meta(),
     generatedAt: 'G',
   });
-  const diff = { added: catalog.operations.map((o) => o.id), removed: [], changed: [] };
+  const diff = { kind: 'none' } as const;
   const lock = makeLock(meta(), catalog, undefined, diff, '2026-10-11T09:00:00.000Z');
 
   it('records version, hashes, counts, digest and a numeric summary of the last change (no endpoint list, no URL)', () => {
@@ -163,6 +167,7 @@ describe('source lock', () => {
       lastChange: {
         fromVersion: null,
         toVersion: '8.20.0',
+        baseline: 'none',
         added: 3,
         removed: 0,
         changed: 0,
@@ -199,7 +204,7 @@ describe('optional Xray source', () => {
     meta: metaWithoutXray(),
     generatedAt: 'G',
   });
-  const diff = { added: catalog.operations.map((o) => o.id), removed: [], changed: [] };
+  const diff = { kind: 'none' } as const;
   const lock = makeLock(metaWithoutXray(), catalog, undefined, diff, 'R');
 
   it('builds, locks and verifies without the xray source (counts.xray = 0)', () => {
@@ -264,5 +269,187 @@ describe('formatReview', () => {
     expect(report).toContain('- [ ] `POST /rest/api/2/search` (matched "search")');
     expect(report).toContain('En attente : 1');
     expect(report).toContain('GET non revus individuellement : 1');
+  });
+});
+
+/** Fetch meta whose `file` entry records the sha256 of `text`. */
+const metaWith = (file: string, text: string, overrides: Partial<FetchMeta> = {}): FetchMeta =>
+  meta({
+    // oxlint-disable-next-line oxc/no-map-spread -- fixture: immutable copy of a source entry
+    sources: meta().sources.map((s) => (s.file === file ? { ...s, sha256: sha256(text) } : s)),
+    ...overrides,
+  });
+const withFile = (file: string, text: string) => ({
+  xml: new Map(XML).set(file, text),
+  meta: metaWith(file, text),
+});
+
+describe('buildCatalog — unusable sources and runtime schema', () => {
+  it('fails on an HTML, empty or operation-less WADL for a present source (Xray included)', () => {
+    for (const [file, text] of [
+      ['api.wadl', '<html><head><title>Log in</title></head></html>'],
+      ['agile.wadl', ''],
+      [
+        'xray.wadl',
+        '<application><resources base="https://jira.example/rest/raven/1.0/"/></application>',
+      ],
+    ] as const) {
+      const input = withFile(file, text);
+      expect(() => buildCatalog({ ...input, decisions: searchDecision, generatedAt: 'G' })).toThrow(
+        /WADL is not a usable WADL/,
+      );
+    }
+  });
+
+  it('fails when a required family has no source at all', () => {
+    const noAgile = meta({ sources: meta().sources.filter((s) => s.api !== 'agile') });
+    expect(() =>
+      buildCatalog({ xml: XML, decisions: searchDecision, meta: noAgile, generatedAt: 'G' }),
+    ).toThrow(
+      'No operation for the "agile" family: its WADL source is missing from catalog/wadl/fetch-meta.json',
+    );
+  });
+
+  it('validates the generated catalog with the schema the server applies at startup', () => {
+    expect(() =>
+      buildCatalog({
+        xml: XML,
+        decisions: searchDecision,
+        meta: meta({ jiraVersion: undefined as unknown as string }),
+        generatedAt: 'G',
+      }),
+    ).toThrow(/^The generated catalog is invalid: meta\.jiraVersion/);
+  });
+
+  it('refuses invalid decisions before building, naming each one', () => {
+    expect(() =>
+      buildCatalog({
+        xml: XML,
+        decisions: {
+          'POST /rest/api/2/search': {
+            ...searchDecision['POST /rest/api/2/search'],
+            reviewedBy: '<identité git du relecteur>',
+          },
+        },
+        meta: meta(),
+        generatedAt: 'G',
+        now: new Date('2026-10-11T00:00:00.000Z'),
+      }),
+    ).toThrow(
+      'Access decision for POST /rest/api/2/search: "reviewedBy" is a placeholder ("<identité git du relecteur>"): replace the placeholder reviewer in catalog/access-decisions.json after reviewing the decision',
+    );
+  });
+
+  it('passes WADL warnings to the caller', () => {
+    const dup = `<application><resources base="https://jira.example/rest/agile/1.0/">
+<resource path="board"><method name="GET"/></resource><resource path="board/"><method name="GET"/></resource>
+</resources></application>`;
+    const input = withFile('agile.wadl', dup);
+    const warn = vi.fn<(message: string) => void>();
+    buildCatalog({ ...input, decisions: searchDecision, generatedAt: 'G', warn });
+    expect(warn).toHaveBeenCalledWith(
+      '⚠ agile WADL: 1 duplicate method + path declaration(s) merged',
+    );
+  });
+
+  it('keeps Xray decisions as dormant, not stale, when the Xray source is absent', () => {
+    const base = searchDecision['POST /rest/api/2/search'];
+    const decisions = {
+      ...searchDecision,
+      'POST /rest/raven/1.0/export/test': { ...base, access: 'write' },
+      'GET /rest/api/2/gone': base,
+    } as const;
+    const without = buildCatalog({
+      xml: XML_WITHOUT_XRAY,
+      decisions,
+      meta: metaWithoutXray(),
+      generatedAt: 'G',
+    });
+    expect(without.staleDecisions).toEqual(['GET /rest/api/2/gone']);
+    expect(without.dormantDecisions).toEqual(['POST /rest/raven/1.0/export/test']);
+    const withXray = buildCatalog({ xml: XML, decisions, meta: meta(), generatedAt: 'G' });
+    expect(withXray.staleDecisions).toEqual([
+      'GET /rest/api/2/gone',
+      'POST /rest/raven/1.0/export/test',
+    ]);
+    expect(withXray.dormantDecisions).toEqual([]);
+  });
+});
+
+describe('lock-based diff (build, then build -- --update-lock)', () => {
+  const v1 = buildCatalog({ xml: XML, decisions: searchDecision, meta: meta(), generatedAt: 'G' });
+  const lock = makeLock(meta(), v1.catalog, undefined, { kind: 'none' }, 'R1');
+  const copy = {
+    operationsSha256: lock.operationsSha256,
+    jiraVersion: '8.20.0',
+    operations: v1.catalog.operations,
+  };
+  // Jira upgrade: one agile operation added.
+  const agile2 = `<?xml version="1.0"?>
+<application xmlns="http://wadl.dev.java.net/2009/02">
+  <resources base="https://jira.example/rest/agile/1.0/"><resource path="board"><method name="GET"/></resource><resource path="sprint"><method name="GET"/></resource></resources>
+</application>`;
+  const xml2 = new Map(XML).set('agile.wadl', agile2);
+  const meta2 = metaWith('agile.wadl', agile2, { jiraVersion: '8.22.0' });
+  const v2 = buildCatalog({ xml: xml2, decisions: searchDecision, meta: meta2, generatedAt: 'G2' });
+
+  it('reports the operations added since the lock even after a plain build overwrote catalog.json', () => {
+    // After `catalog:build`, catalog.json already holds v2: only the baseline copy matches the lock.
+    const baseline = selectBaseline(lock, [copy, v2.catalog]);
+    expect(baseline).toMatchObject({ kind: 'previous-lock', jiraVersion: '8.20.0' });
+    const diff = diffAgainstBaseline(baseline, v2.catalog.operations);
+    expect(diff).toEqual({ added: ['GET /rest/agile/1.0/sprint'], removed: [], changed: [] });
+    expect(makeLock(meta2, v2.catalog, lock, baseline, 'R2').lastChange).toEqual({
+      fromVersion: '8.20.0',
+      toVersion: '8.22.0',
+      baseline: 'previous-lock',
+      added: 1,
+      removed: 0,
+      changed: 0,
+      recordedAt: 'R2',
+    });
+    expect(formatBaselineDiff(baseline, diff, v2.catalog)).toContain(
+      '## Catalogue verrouillé (Jira 8.20.0) → Jira 8.22.0',
+    );
+  });
+
+  it('uses a catalog.json that still equals the lock when no baseline copy exists', () => {
+    expect(selectBaseline(lock, [undefined, v1.catalog]).kind).toBe('previous-lock');
+  });
+
+  it('says the baseline is unknown instead of reporting a wrong diff', () => {
+    const baseline = selectBaseline(lock, [undefined, v2.catalog, { operations: 'garbage' }]);
+    expect(baseline).toEqual({ kind: 'unknown', jiraVersion: '8.20.0' });
+    expect(diffAgainstBaseline(baseline, v2.catalog.operations)).toBeUndefined();
+    expect(makeLock(meta2, v2.catalog, lock, baseline, 'R2').lastChange).toMatchObject({
+      baseline: 'unknown',
+      added: null,
+      removed: null,
+      changed: null,
+    });
+    expect(formatBaselineDiff(baseline, undefined, v2.catalog)).toContain('Référence inconnue');
+  });
+
+  it('treats a missing lock as a first generation (everything added)', () => {
+    const baseline = selectBaseline(undefined, [copy]);
+    expect(baseline).toEqual({ kind: 'none' });
+    const diff = diffAgainstBaseline(baseline, v1.catalog.operations);
+    expect(diff?.added).toHaveLength(3);
+    expect(formatBaselineDiff(baseline, diff, v1.catalog)).toContain(
+      '## Première génération → Jira 8.20.0',
+    );
+  });
+
+  it('leaves the lock untouched when only the fetch date and the last-change record would change', () => {
+    const same = {
+      kind: 'previous-lock',
+      jiraVersion: '8.20.0',
+      operations: v1.catalog.operations,
+    };
+    const again = makeLock(meta({ fetchedAt: 'later' }), v1.catalog, lock, same as never, 'R3');
+    expect(sameLockContent(lock, again)).toBe(true);
+    expect(sameLockContent(undefined, again)).toBe(false);
+    const upgraded = makeLock(meta2, v2.catalog, lock, { kind: 'none' }, 'R3');
+    expect(sameLockContent(lock, upgraded)).toBe(false);
   });
 });

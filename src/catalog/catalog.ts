@@ -41,13 +41,20 @@ export class CatalogError extends Error {
   }
 }
 
+/** Decimal only: no hexadecimal (`0x10`), no `Infinity`, no surrounding whitespace. */
+const DECIMAL_NUMBER = /^-?(?:\d+(?:\.\d*)?|\.\d+)(?:[eE][+-]?\d+)?$/;
+
+const absent = (value: QueryValue | undefined): boolean =>
+  value === undefined || (Array.isArray(value) && value.length === 0);
+
+/** Values are sent as given: a typed value with surrounding whitespace is refused, not trimmed. */
 function checkType(op: Operation, p: OperationParam, value: QueryScalar): void {
-  const text = String(value).trim();
+  const text = String(value);
   const ok =
     p.type === 'integer'
       ? /^-?\d+$/.test(text)
       : p.type === 'number'
-        ? text !== '' && Number.isFinite(Number(text))
+        ? DECIMAL_NUMBER.test(text)
         : p.type === 'boolean'
           ? text === 'true' || text === 'false'
           : true;
@@ -76,6 +83,18 @@ function encodePathParam(
   }
   checkType(op, p, value);
   return encodeURIComponent(text);
+}
+
+/**
+ * Whether a body declared with these media types can be sent as JSON: no declared type, a JSON
+ * type (`application/json`, `…+json`, any case or parameters), or a wildcard (`*\/*`, `application/*`).
+ */
+export function acceptsJson(mediaTypes: readonly string[]): boolean {
+  if (mediaTypes.length === 0) return true;
+  return mediaTypes.some((type) => {
+    const t = (type.split(';')[0] ?? '').trim().toLowerCase();
+    return t === '*/*' || t === 'application/*' || t.includes('json');
+  });
 }
 
 export function describeOperation(op: Operation): Operation & { notes: string[] } {
@@ -218,8 +237,9 @@ export class Catalog {
       }
       for (const v of typeof value === 'object' ? value : [value]) checkType(op, p, v);
     }
+    // A declared default lets Jira fill the value in; an empty list sends nothing, so it is missing.
     const missing = declaredQuery
-      .filter((p) => p.required && query[p.name] === undefined)
+      .filter((p) => p.required && p.default === undefined && absent(query[p.name]))
       .map((p) => p.name);
     if (missing.length > 0) {
       throw new CatalogError(
@@ -236,7 +256,7 @@ export class Catalog {
         );
       }
       const types = op.body.mediaTypes;
-      if (types.length > 0 && !types.some((t) => t.includes('json'))) {
+      if (!acceptsJson(types)) {
         throw new CatalogError(
           `${op.id} expects ${types.join(', ')}, which the generic tool cannot send. Use a dedicated tool (e.g. jira_add_attachment).`,
         );

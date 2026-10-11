@@ -1,5 +1,11 @@
 import { describe, expect, it } from 'vitest';
-import { Catalog, CatalogError, describeOperation, enabledFamilies } from './catalog.ts';
+import {
+  Catalog,
+  CatalogError,
+  acceptsJson,
+  describeOperation,
+  enabledFamilies,
+} from './catalog.ts';
 import type { Operation } from './types.ts';
 
 const base = { summary: '', body: { accepted: false, mediaTypes: [] }, accessReason: 'test' };
@@ -286,5 +292,95 @@ describe('describeOperation', () => {
     const issue = describeOperation(getIssue);
     expect(issue.notes[0]).toBe('Takes no request body.');
     expect(issue.notes[2]).toContain('not individually reviewed');
+  });
+});
+
+const put = (mediaTypes: string[]): Operation => ({
+  ...base,
+  id: 'PUT /rest/api/2/thing',
+  api: 'api',
+  method: 'PUT',
+  path: '/rest/api/2/thing',
+  access: 'write',
+  body: { accepted: true, mediaTypes },
+  params: [],
+});
+
+describe('acceptsJson / body media types', () => {
+  it('accepts JSON, +json, wildcards and undeclared types; refuses other types', () => {
+    for (const types of [
+      [],
+      ['application/json'],
+      ['Application/JSON; charset=UTF-8'],
+      ['application/vnd.demo+json'],
+      ['*/*'],
+      ['application/*'],
+      ['text/plain', '*/*'],
+    ]) {
+      expect(acceptsJson(types)).toBe(true);
+      const ops = new Catalog([put(types)], meta);
+      expect(
+        ops.buildRequest(ops.require('PUT /rest/api/2/thing'), { body: { a: 1 } }).body,
+      ).toEqual({ a: 1 });
+    }
+    for (const types of [['multipart/form-data'], ['text/plain'], ['application/xml']])
+      expect(acceptsJson(types)).toBe(false);
+  });
+});
+
+describe('Catalog.buildRequest — query value edge cases', () => {
+  const op: Operation = {
+    ...base,
+    id: 'GET /rest/api/2/edge',
+    api: 'api',
+    method: 'GET',
+    path: '/rest/api/2/edge',
+    access: 'read',
+    params: [
+      { name: 'n', in: 'query', type: 'number', required: false, repeating: false },
+      { name: 'i', in: 'query', type: 'integer', required: false, repeating: false },
+      { name: 'b', in: 'query', type: 'boolean', required: false, repeating: false },
+      {
+        name: 'withDefault',
+        in: 'query',
+        type: 'integer',
+        required: true,
+        repeating: false,
+        default: '50',
+      },
+      { name: 'list', in: 'query', type: 'string', required: true, repeating: true },
+    ],
+  };
+  const ops = new Catalog([op], meta);
+  const call = (query: Record<string, string | number | string[]>) => () =>
+    ops.buildRequest(op, { query: { list: ['a'], ...query } });
+
+  it('refuses typed values with surrounding whitespace and non-decimal numbers', () => {
+    for (const [name, value] of [
+      ['i', ' 5'],
+      ['i', '5 '],
+      ['n', '0x10'],
+      ['n', 'Infinity'],
+      ['n', ' 1.5'],
+      ['n', ''],
+      ['b', ' true'],
+    ] as const)
+      expect(call({ [name]: value }), `${name}=${JSON.stringify(value)}`).toThrow('expects');
+    for (const [name, value] of [
+      ['n', '1.5'],
+      ['n', '-2e3'],
+      ['n', '.5'],
+      ['n', 3],
+      ['i', '-7'],
+      ['b', 'false'],
+    ] as const)
+      expect(call({ [name]: value })).not.toThrow();
+  });
+
+  it('does not require a parameter that has a default, and treats an empty list as missing', () => {
+    expect(() => ops.buildRequest(op, { query: { list: ['x'] } })).not.toThrow();
+    expect(() => ops.buildRequest(op, { query: { list: [] } })).toThrow(
+      'Missing required query parameter(s) for GET /rest/api/2/edge: list',
+    );
   });
 });

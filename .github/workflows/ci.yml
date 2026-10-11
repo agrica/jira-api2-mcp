@@ -95,4 +95,4 @@ jobs:
       # Matters on self-hosted runners, whose workspace persists between jobs.
       - name: Remove the endpoint inventory from the workspace
         if: always()
-        run: rm -rf catalog/wadl catalog/catalog.json catalog/last-diff.md catalog/review.md dist jira-mcp-*.tgz
+        run: rm -rf catalog/wadl catalog/catalog.json catalog/last-diff.md catalog/review.md catalog/lock-baseline.json dist jira-mcp-*.tgz

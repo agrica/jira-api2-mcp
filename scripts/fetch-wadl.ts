@@ -1,8 +1,8 @@
-import { mkdir, readFile, rm, writeFile } from 'node:fs/promises';
+import { mkdir, rm, writeFile } from 'node:fs/promises';
 import { loadConfig } from '../src/config.ts';
 import { JiraClient } from '../src/http/jira-client.ts';
 import { compareSourcesWithLock } from './lib/build.ts';
-import { FETCH_META, SOURCE_LOCK, WADL_DIR, fetchSources, type SourceLock } from './lib/sources.ts';
+import { FETCH_META, WADL_DIR, fetchSources, readLockIfAny } from './lib/sources.ts';
 import { runScript } from './lib/run-script.ts';
 
 await runScript(async () => {
@@ -29,9 +29,8 @@ await runScript(async () => {
     `✔ Jira ${meta.jiraVersion} (build ${meta.jiraBuildNumber}) — WADL fetched at ${meta.fetchedAt}`,
   );
 
-  const lock = await readFile(SOURCE_LOCK, 'utf8')
-    .then((t) => JSON.parse(t) as SourceLock)
-    .catch(() => undefined);
+  // A missing lock is a first generation; a corrupt one is reported, not mistaken for it.
+  const lock = await readLockIfAny();
   if (!lock) {
     console.error('  no catalog/source-lock.json yet: first generation');
   } else {

@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest';
+import { describe, expect, it, vi } from 'vitest';
 import { parseWadl } from './wadl.ts';
 
 /** A WADL declaring a single GET resource at `path`, under a context path. */
@@ -176,5 +176,144 @@ describe('parseWadl', () => {
   <resources base="https://jira.example.com/plugins/servlet/"><resource path="x"><method name="GET"/></resource></resources>
 </application>`;
     expect(() => parseWadl(xml, 'api')).toThrow(/must start with \/rest\//);
+  });
+});
+
+const wrap = (
+  resources: string,
+  base = 'https://jira.example.com/rest/api/2/',
+) => `<?xml version="1.0"?>
+<application xmlns="http://wadl.dev.java.net/2009/02">
+  <resources base="${base}">${resources}</resources>
+</application>`;
+
+describe('parseWadl — not a WADL', () => {
+  it.each([
+    ['empty file', ''],
+    ['empty file', '  \n'],
+    [
+      'no <application> root element',
+      '<html><head><title>Log in</title></head><body>SSO</body></html>',
+    ],
+    ['no <application> root element', '<!DOCTYPE html><html><body><br></body></html>'],
+    ['not well-formed XML', 'garbage <<<'],
+    [
+      'no <resources> element with a <resource>',
+      '<application><resources base="https://jira.example.com/rest/api/2/"/></application>',
+    ],
+    ['no <resources> element with a <resource>', '<application/>'],
+    ['no operation declared', wrap('<resource path="x"><method name="TRACE"/></resource>')],
+  ])('refuses a source with %s', (why, xml) => {
+    expect(() => parseWadl(xml, 'agile')).toThrow(
+      `The agile WADL is not a usable WADL (${why}): a login, proxy or error page may have been fetched instead`,
+    );
+  });
+
+  it('names the source instead of a bare "Invalid URL" for a relative or missing base', () => {
+    const op = '<resource path="x"><method name="GET"/></resource>';
+    expect(() => parseWadl(wrap(op, 'rest/api/2/'), 'api')).toThrow(
+      'The api WADL has a <resources> element without an absolute base URL (base="rest/api/2/")',
+    );
+    const noBase = `<application><resources>${op}</resources></application>`;
+    expect(() => parseWadl(noBase, 'api')).toThrow(
+      'The api WADL has a <resources> element without an absolute base URL (base=null)',
+    );
+  });
+});
+
+describe('parseWadl — duplicates, parameters, media types and docs', () => {
+  it('merges a method + path declared twice and reports the count', () => {
+    const warn = vi.fn<(message: string) => void>();
+    const ops = parseWadl(
+      wrap(`
+<resource path="dup">
+  <method name="POST"><doc>First doc</doc><request><param name="a" style="query"/></request></method>
+</resource>
+<resource path="dup/">
+  <method name="POST"><doc>Second doc</doc><request>
+    <param name="a" style="query" required="true"/>
+    <param name="b" style="query" type="xs:int" required="true"/>
+    <representation mediaType="application/json"/>
+  </request></method>
+</resource>`),
+      'api',
+      warn,
+    );
+    expect(ops).toEqual([
+      {
+        id: 'POST /rest/api/2/dup',
+        api: 'api',
+        method: 'POST',
+        path: '/rest/api/2/dup',
+        summary: 'First doc',
+        body: { accepted: true, mediaTypes: ['application/json'] },
+        params: [
+          { name: 'a', in: 'query', type: 'string', required: true, repeating: false },
+          { name: 'b', in: 'query', type: 'integer', required: true, repeating: false },
+        ],
+      },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      '⚠ api WADL: 1 duplicate method + path declaration(s) merged',
+    );
+  });
+
+  it('lets a method-level query parameter override the resource-level one', () => {
+    const [op] = parseWadl(
+      wrap(`<resource path="r"><param name="q" style="query"/>
+  <method name="GET"><request><param name="q" style="query" type="xs:long" required="true"/></request></method>
+</resource>`),
+      'api',
+      vi.fn<(message: string) => void>(),
+    );
+    expect(op?.params).toEqual([
+      { name: 'q', in: 'query', type: 'integer', required: true, repeating: false },
+    ]);
+  });
+
+  it('maps xsd: and unsigned types, dedupes repeated placeholders and counts ignored styles', () => {
+    const warn = vi.fn<(message: string) => void>();
+    const [op] = parseWadl(
+      wrap(`<resource path="{x}/b/{x}"><param name="x" style="template" type="xsd:unsignedInt"/>
+  <param name="m" style="matrix"/>
+  <method name="GET"><request>
+    <param name="n" style="query" type="xsd:nonNegativeInteger"/>
+    <param name="d" style="query" type="xsd:decimal"/>
+    <param name="h" style="header"/>
+  </request></method>
+</resource>`),
+      'api',
+      warn,
+    );
+    expect(op?.params).toEqual([
+      { name: 'x', in: 'path', type: 'integer', required: true, repeating: false },
+      { name: 'n', in: 'query', type: 'integer', required: false, repeating: false },
+      { name: 'd', in: 'query', type: 'number', required: false, repeating: false },
+    ]);
+    expect(warn).toHaveBeenCalledWith(
+      '⚠ api WADL: 2 matrix / header parameter(s) ignored (the generic tools cannot send them)',
+    );
+  });
+
+  it('normalises media types (lowercase, no parameters), "*/*" included', () => {
+    const [op] = parseWadl(
+      wrap(`<resource path="r"><method name="PUT"><request>
+  <representation mediaType="Application/JSON; charset=UTF-8"/>
+  <representation mediaType="application/json"/>
+  <representation mediaType="*/*"/>
+</request></method></resource>`),
+      'api',
+      vi.fn<(message: string) => void>(),
+    );
+    expect(op?.body).toEqual({ accepted: true, mediaTypes: ['application/json', '*/*'] });
+  });
+
+  it('unwraps CDATA docs and falls back to the doc title', () => {
+    const ops = parseWadl(
+      wrap(`<resource path="a"><method name="GET"><doc><![CDATA[Get <b>issue</b> by key]]></doc></method></resource>
+<resource path="b"><method name="GET"><doc title="Get things"/></method></resource>`),
+      'api',
+    );
+    expect(ops.map((o) => o.summary)).toEqual(['Get issue by key', 'Get things']);
   });
 });

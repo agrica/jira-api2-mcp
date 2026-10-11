@@ -35,6 +35,14 @@ export function describeDiff(
   return env.CI === 'true' ? summarizeDiff(diff, title) : formatDiff(diff, title);
 }
 
+/** A list of operation ids for a log line: the count only in CI, so that logs never list endpoints. */
+export function describeIds(
+  ids: readonly string[],
+  env: Readonly<Record<string, string | undefined>> = process.env,
+): string {
+  return env.CI === 'true' ? `${ids.length} operation(s)` : ids.join(', ');
+}
+
 function section(label: string, ids: string[]): string {
   return [`### ${label} (${ids.length})`, ...ids.map((id) => `- \`${id}\``), ''].join('\n');
 }

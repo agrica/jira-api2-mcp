@@ -3,7 +3,7 @@ import { mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { describe, expect, it } from 'vitest';
-import { DEFAULT_CATALOG_PATH, loadCatalogFile } from './load.ts';
+import { DEFAULT_CATALOG_PATH, loadCatalogFile, parseCatalog } from './load.ts';
 
 const valid = {
   meta: {
@@ -79,12 +79,20 @@ describe('loadCatalogFile', () => {
 
   it('rejects PUT, PATCH and DELETE classified as read, and unreviewed POST reads', async () => {
     for (const method of ['PUT', 'PATCH', 'DELETE']) {
-      const bad = { ...valid, operations: [{ ...valid.operations[0], method }] };
+      const bad = {
+        ...valid,
+        operations: [{ ...valid.operations[0], method, id: `${method} /rest/api/2/myself` }],
+      };
       await expect(loadCatalogFile(await tempFile(JSON.stringify(bad)))).rejects.toThrow(
         `operations.0.access: ${method} operations cannot be classified as read`,
       );
     }
-    const post = { ...valid.operations[0], method: 'POST', path: '/rest/api/2/search' };
+    const post = {
+      ...valid.operations[0],
+      id: 'POST /rest/api/2/search',
+      method: 'POST',
+      path: '/rest/api/2/search',
+    };
     const unreviewed = { ...valid, operations: [{ ...post, accessReason: 'default rule' }] };
     await expect(loadCatalogFile(await tempFile(JSON.stringify(unreviewed)))).rejects.toThrow(
       'operations.0.accessReason: a POST classified as read must come from a reviewed decision',
@@ -96,5 +104,34 @@ describe('loadCatalogFile', () => {
     expect(
       (await loadCatalogFile(await tempFile(JSON.stringify(reviewed)))).operations,
     ).toHaveLength(1);
+  });
+});
+
+describe('catalog coherence', () => {
+  it('rejects an id that is not "<method> <path>", a duplicate id and counts that disagree', async () => {
+    const op = valid.operations[0];
+    const wrongId = { ...valid, operations: [{ ...op, id: 'GET /rest/api/2/other' }] };
+    await expect(loadCatalogFile(await tempFile(JSON.stringify(wrongId)))).rejects.toThrow(
+      'operations.0.id: must be "<method> <path>"',
+    );
+    const duplicate = {
+      ...valid,
+      meta: { ...valid.meta, counts: { api: 2, agile: 0, xray: 0 } },
+      operations: [op, op],
+    };
+    await expect(loadCatalogFile(await tempFile(JSON.stringify(duplicate)))).rejects.toThrow(
+      'operations.1.id: duplicate id',
+    );
+    const counts = { ...valid, meta: { ...valid.meta, counts: { api: 1, agile: 4, xray: 0 } } };
+    await expect(loadCatalogFile(await tempFile(JSON.stringify(counts)))).rejects.toThrow(
+      'meta.counts.agile: 4 does not match the 0 operation(s) of the family',
+    );
+  });
+
+  it('is exported for the build scripts with a caller-chosen label', () => {
+    expect(parseCatalog(valid, 'X').operations).toHaveLength(1);
+    expect(() =>
+      parseCatalog({ ...valid, meta: { ...valid.meta, jiraVersion: '' } }, 'The generated catalog'),
+    ).toThrow('The generated catalog is invalid: meta.jiraVersion:');
   });
 });

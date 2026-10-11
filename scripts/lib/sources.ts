@@ -1,7 +1,9 @@
+import { readFile } from 'node:fs/promises';
 import type { JiraClient } from '../../src/http/jira-client.ts';
 import { JiraApiError } from '../../src/http/jira-error.ts';
 import type { ApiFamily } from '../../src/catalog/types.ts';
 import { sha256 } from './build.ts';
+import { parseWadl } from './wadl.ts';
 
 export const CATALOG_DIR = new URL('../../catalog/', import.meta.url);
 export const WADL_DIR = new URL('wadl/', CATALOG_DIR); //                  not versioned (mode B)
@@ -11,6 +13,8 @@ export const DECISIONS = new URL('access-decisions.json', CATALOG_DIR); // versi
 export const CATALOG_JSON = new URL('catalog.json', CATALOG_DIR); //       not versioned (mode B)
 export const LAST_DIFF = new URL('last-diff.md', CATALOG_DIR); //          not versioned (mode B)
 export const REVIEW_REPORT = new URL('review.md', CATALOG_DIR); //         not versioned (mode B)
+/** Operations of the last `--update-lock`: the reference of last-diff.md, kept across plain builds. */
+export const LOCK_BASELINE = new URL('lock-baseline.json', CATALOG_DIR); // not versioned (mode B)
 
 /** An `optional` source (plugin that may not be installed) answering 404 is skipped, not an error. */
 export const WADL_SOURCES: readonly {
@@ -49,24 +53,70 @@ export interface SourceLock extends FetchMeta {
   lastChange: {
     fromVersion: string | null;
     toVersion: string;
-    added: number;
-    removed: number;
-    changed: number;
+    /**
+     * What the counts compare with: the operations of the previous lock, nothing (first lock), or
+     * `unknown` when the locked operations were not available locally (the counts are then null).
+     */
+    baseline: 'previous-lock' | 'none' | 'unknown';
+    added: number | null;
+    removed: number | null;
+    changed: number | null;
     recordedAt: string;
   };
 }
 
-interface ServerInfo {
-  version: string;
-  buildNumber: number;
+/**
+ * Reads a JSON file of the catalog directory. A missing or unreadable file gives one line naming
+ * the file and what to run (`hint`), instead of a stack trace.
+ */
+export async function readCatalogJson<T>(url: URL, hint: string): Promise<T> {
+  const relative = url.pathname.split('/catalog/')[1];
+  const name = relative ? `catalog/${relative}` : url.pathname;
+  let text: string;
+  try {
+    text = await readFile(url, 'utf8');
+  } catch (error) {
+    const missing = (error as NodeJS.ErrnoException).code === 'ENOENT';
+    throw new Error(`${missing ? 'missing' : 'cannot read'} ${name} — ${hint}`, { cause: error });
+  }
+  try {
+    return JSON.parse(text) as T;
+  } catch {
+    throw new Error(`${name} is not valid JSON — ${hint}`);
+  }
+}
+
+/** The lock, or undefined when there is none yet; a corrupt lock is an error, not a first generation. */
+export async function readLockIfAny(): Promise<SourceLock | undefined> {
+  try {
+    return await readCatalogJson<SourceLock>(SOURCE_LOCK, 'restore it from git');
+  } catch (error) {
+    if ((error as { cause?: NodeJS.ErrnoException }).cause?.code === 'ENOENT') return undefined;
+    throw error;
+  }
+}
+
+function serverInfo(data: unknown): { version: string; buildNumber: number } {
+  const info = (typeof data === 'object' && data !== null ? data : {}) as Record<string, unknown>;
+  if (
+    typeof info.version !== 'string' ||
+    !info.version.trim() ||
+    typeof info.buildNumber !== 'number' ||
+    !Number.isInteger(info.buildNumber)
+  ) {
+    throw new Error(
+      '/rest/api/2/serverInfo did not return a Jira version and build number — check JIRA_BASE_URL and any authentication proxy',
+    );
+  }
+  return { version: info.version, buildNumber: info.buildNumber };
 }
 
 export async function fetchSources(
   client: JiraClient,
 ): Promise<{ meta: FetchMeta; xml: Map<string, string> }> {
-  const info = (
-    await client.request({ method: 'GET', path: '/rest/api/2/serverInfo', access: 'read' })
-  ).data as ServerInfo;
+  const info = serverInfo(
+    (await client.request({ method: 'GET', path: '/rest/api/2/serverInfo', access: 'read' })).data,
+  );
   const xml = new Map<string, string>();
   const sources: SourceFile[] = [];
   const absent: string[] = [];
@@ -89,6 +139,9 @@ export async function fetchSources(
       throw error;
     }
     if (typeof data !== 'string') throw new Error(`Unexpected WADL payload for ${source.path}`);
+    // An SSO, proxy or error page answered 200 must not replace the last good WADL: validated here,
+    // before the caller writes any file (warnings are left to catalog:build).
+    parseWadl(data, source.api, () => {});
     xml.set(source.file, data);
     sources.push({ ...source, sha256: sha256(data), bytes: Buffer.byteLength(data) });
   }

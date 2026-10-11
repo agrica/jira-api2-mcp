@@ -1,9 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JiraClient, type FetchLike } from '../../src/http/jira-client.ts';
-import { fetchSources } from './sources.ts';
+import { fetchSources, readCatalogJson, readLockIfAny } from './sources.ts';
 
 const xml = (base: string) =>
-  `<?xml version="1.0"?><application xmlns="http://wadl.dev.java.net/2009/02"><resources base="https://jira.example.com${base}/"/></application>`;
+  `<?xml version="1.0"?><application xmlns="http://wadl.dev.java.net/2009/02"><resources base="https://jira.example.com${base}/"><resource path="x"><method name="GET"/></resource></resources></application>`;
 
 function setup(statusFor: (path: string) => number) {
   const fetchMock = vi.fn<FetchLike>(async (input) => {
@@ -77,5 +77,61 @@ describe('fetchSources', () => {
       async () => new Response('{}', { headers: { 'content-type': 'application/json' } }),
     );
     await expect(fetchSources(client)).rejects.toThrow('Unexpected WADL payload');
+  });
+});
+
+describe('fetchSources — validation before any file is written', () => {
+  vi.spyOn(console, 'error').mockImplementation(() => {});
+
+  it('refuses an SSO or proxy page answered 200 instead of a WADL, optional source included', async () => {
+    for (const prefix of ['/rest/api/', '/rest/raven/']) {
+      const { client, fetchMock } = setup(() => 200);
+      const real = fetchMock.getMockImplementation();
+      fetchMock.mockImplementation(async (input, init) =>
+        new URL(String(input)).pathname.startsWith(`${prefix}`) &&
+        !String(input).includes('serverInfo')
+          ? new Response('<html><body>Log in</body></html>', {
+              headers: { 'content-type': 'application/xml' },
+            })
+          : (real?.(input, init) ?? new Response('')),
+      );
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one fresh client per case
+      await expect(fetchSources(client)).rejects.toThrow(/WADL is not a usable WADL/);
+    }
+  });
+
+  it('refuses a serverInfo without version or build number', async () => {
+    for (const body of ['{}', '{"version":"","buildNumber":1}', '{"version":"8.20.0"}']) {
+      const { client, fetchMock } = setup(() => 200);
+      fetchMock.mockImplementationOnce(
+        async () => new Response(body, { headers: { 'content-type': 'application/json' } }),
+      );
+      // oxlint-disable-next-line eslint/no-await-in-loop -- one fresh client per case
+      await expect(fetchSources(client)).rejects.toThrow(
+        '/rest/api/2/serverInfo did not return a Jira version and build number',
+      );
+    }
+  });
+});
+
+describe('readCatalogJson / readLockIfAny', () => {
+  const dir = new URL('../../catalog/', import.meta.url);
+
+  it('names a missing or invalid file and the hint, without a stack trace', async () => {
+    await expect(
+      readCatalogJson(new URL('absent-file-xyz.json', dir), 'run npm run catalog:fetch'),
+    ).rejects.toThrow('missing catalog/absent-file-xyz.json — run npm run catalog:fetch');
+    await expect(readCatalogJson(new URL('../README.md', dir), 'restore it')).rejects.toThrow(
+      /README\.md is not valid JSON — restore it/,
+    );
+  });
+
+  it('reads valid JSON, and a lock that does not exist yet is undefined', async () => {
+    expect(
+      await readCatalogJson<Record<string, unknown>>(new URL('access-decisions.json', dir), ''),
+    ).toBeTypeOf('object');
+    // The repository has no lock until the first generation; either way, no throw for ENOENT.
+    const lock = await readLockIfAny();
+    expect(lock === undefined || typeof lock === 'object').toBe(true);
   });
 });

@@ -1,6 +1,13 @@
 import { describe, expect, it } from 'vitest';
 import type { Operation } from '../../src/catalog/types.ts';
-import { describeDiff, diffOperations, formatDiff, hasDrift, summarizeDiff } from './diff.ts';
+import {
+  describeDiff,
+  describeIds,
+  diffOperations,
+  formatDiff,
+  hasDrift,
+  summarizeDiff,
+} from './diff.ts';
 
 const op = (id: string, summary = ''): Operation => {
   const [method, path] = id.split(' ') as [Operation['method'], string];
@@ -44,5 +51,10 @@ describe('diffOperations', () => {
     expect(summarizeDiff(diff, 'Δ')).toBe('Δ: +1 −0 ~1');
     expect(describeDiff(diff, 'Δ', { CI: 'true' })).toBe('Δ: +1 −0 ~1');
     expect(describeDiff(diff, 'Δ', {})).toContain('- `GET /d`');
+  });
+
+  it('lists ids outside CI and counts them in CI', () => {
+    expect(describeIds(['GET /a', 'GET /b'], {})).toBe('GET /a, GET /b');
+    expect(describeIds(['GET /a', 'GET /b'], { CI: 'true' })).toBe('2 operation(s)');
   });
 });

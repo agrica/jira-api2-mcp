@@ -10,8 +10,9 @@ coverage/
 .mcp.json
 
 # Inventaire des endpoints de l'instance : non versionné (mode B, décision H7).
-# Mode A (si H7 est confirmée positivement) : supprimer les quatre lignes suivantes.
+# Mode A (si H7 est confirmée positivement) : supprimer les cinq lignes suivantes.
 catalog/wadl/
 catalog/catalog.json
 catalog/last-diff.md
 catalog/review.md
+catalog/lock-baseline.json

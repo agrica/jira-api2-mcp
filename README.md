@@ -101,6 +101,7 @@ npm run build
 Points d'attention :
 
 - **Première génération.** Tant que `catalog/source-lock.json` n'existe pas, ou si l'instance ne correspond plus au verrou, `catalog:check` échoue : suivez « Catalogue et revue » (revue des candidats, puis `catalog:build -- --update-lock`).
+- **Relecteur à renseigner.** `catalog/access-decisions.json` est livré avec une décision dont le relecteur est un modèle (`<identité git du relecteur>`) : `catalog:build` s'arrête tant qu'une personne n'a pas relu cette décision et remplacé ce modèle par son identité git (voir « Catalogue et revue »).
 - **Instance sans Xray.** Le WADL Xray est facultatif : un 404 est consigné et la génération continue.
 - **Sans catalogue,** le serveur s'arrête au démarrage avec un message qui indique ces commandes.
 
@@ -293,7 +294,9 @@ Contrôles faits avant l'appel :
 - `operationId` doit exister dans le catalogue (et appartenir à une famille activée) ;
 - `pathParams` : tous les paramètres du chemin sont requis, typés, encodés ; `..`, `.` et les valeurs vides sont refusés ;
 - `query` : seuls les paramètres déclarés sont acceptés, avec leur type ; une liste n'est acceptée que pour un paramètre répétable ;
-- `body` : refusé si l'opération n'accepte pas de corps, ou pour un GET / HEAD ; seul le JSON est accepté. Le WADL ne décrit pas le contenu du corps : c'est Jira qui le valide.
+  - une valeur typée (entier, nombre, booléen) est envoyée telle quelle : entourée d'espaces, ou en hexadécimal (`0x10`), elle est refusée ;
+  - un paramètre déclaré requis peut être omis s'il a une valeur par défaut ; une liste vide compte comme absente ;
+- `body` : refusé si l'opération n'accepte pas de corps, ou pour un GET / HEAD ; seul le JSON est envoyé, accepté quand le WADL déclare un type JSON (`application/json`, `…+json`), un type générique (`*/*`, `application/*`) ou aucun type. Le WADL ne décrit pas le contenu du corps : c'est Jira qui le valide.
 
 Exemple :
 
@@ -360,8 +363,25 @@ Exemple :
 1. `catalog:drift` (sauf la première fois) ;
 2. `catalog:fetch`, puis `catalog:build` ;
 3. décider chaque candidat listé dans `catalog/review.md`, dans `catalog/access-decisions.json` (raison, relecteur, date) ;
+   - **la première fois**, relire aussi la décision livrée pour `POST /rest/api/2/search` et remplacer son relecteur modèle `<identité git du relecteur>` par votre identité git, et sa date par celle de la relecture : sinon `catalog:build` s'arrête avec « replace the placeholder reviewer in catalog/access-decisions.json after reviewing the decision » ;
 4. `catalog:build -- --update-lock`, puis `npm run verify` ;
 5. pull request relue par une seconde personne.
+
+**Contrôles de la génération** (`catalog:fetch`, `catalog:build` et `catalog:check`) :
+
+- **WADL inutilisable.** Un fichier vide, une page HTML (connexion SSO, proxy, erreur), un document sans `<application>` ni `<resources>`, ou un WADL sans aucune opération est refusé : `catalog:fetch` n'écrit alors aucun fichier, et `catalog:build` ne génère rien, donc `--update-lock` ne peut pas verrouiller un catalogue vide. Une `base` relative ou absente est signalée avec le nom du WADL.
+- **Décisions.** Chaque entrée de `catalog/access-decisions.json`, même obsolète, est contrôlée ; chaque problème est affiché sur sa ligne, avec l'opération concernée :
+  - `access` vaut exactement `read`, `write` ou `destructive` ;
+  - `reason` et `reviewedBy` sont renseignés et ne sont pas des modèles (`<…>`, `TODO`, `TBD`, `?`, `x`, `xxx`…) ; une identité « Nom <courriel> » est acceptée ;
+  - `reviewedOn` est une vraie date `AAAA-MM-JJ`, pas dans le futur (un jour de marge pour les fuseaux horaires).
+- **Schéma du serveur.** Le catalogue généré passe par la même validation qu'au démarrage du serveur (chemins, classes d'accès, identifiants, comptes par famille) : un catalogue que le serveur refuserait échoue dès la génération.
+- **Doublons.** Une même méthode et un même chemin déclarés deux fois dans un WADL sont fusionnés (paramètres réunis, corps accepté si l'une des déclarations l'accepte, première description gardée) et leur nombre est affiché. Les paramètres `matrix` et `header`, que les outils génériques ne savent pas envoyer, sont comptés et signalés.
+- **Xray absent.** Les décisions qui portent sur Xray (`/rest/raven/`) sont conservées sans être signalées comme obsolètes quand le plugin n'est pas installé.
+- **Différences.** `catalog/last-diff.md` et le résumé `lastChange` du verrou comparent le catalogue au **dernier catalogue verrouillé**, et non à la génération précédente : `catalog:build` puis `catalog:build -- --update-lock` montrent tous deux les opérations ajoutées ou supprimées par la mise à jour de Jira.
+  - Le verrou ne contient que l'empreinte des opérations ; leur liste est gardée localement dans `catalog/lock-baseline.json` (non versionné), écrit par `--update-lock`.
+  - Sans cette copie (nouveau clone), un `catalog/catalog.json` encore identique au verrou sert de référence ; sinon la référence est déclarée inconnue (`baseline: "unknown"`, comptes `null`) plutôt que de donner un faux résultat.
+  - Un `--update-lock` qui ne change ni version, ni fichiers, ni opérations laisse le verrou intact.
+- **CI.** Avec `CI=true`, les listes d'opérations (différences, décisions obsolètes) sont remplacées par leur nombre.
 
 ## CI (GitHub Actions)
 

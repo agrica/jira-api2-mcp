@@ -50,18 +50,59 @@ const operationSchema = z
         message: 'a POST classified as read must come from a reviewed decision',
       });
     }
+    if (op.id !== `${op.method} ${op.path}`)
+      ctx.addIssue({ code: 'custom', path: ['id'], message: 'must be "<method> <path>"' });
   });
 
-const catalogSchema = z.object({
-  meta: z.object({
-    jiraVersion: z.string().min(1),
-    jiraBuildNumber: z.number().int(),
-    fetchedAt: z.string().min(1),
-    generatedAt: z.string().min(1),
-    counts: z.object({ api: z.number().int(), agile: z.number().int(), xray: z.number().int() }),
-  }),
-  operations: z.array(operationSchema),
-});
+const catalogSchema = z
+  .object({
+    meta: z.object({
+      jiraVersion: z.string().min(1),
+      jiraBuildNumber: z.number().int(),
+      fetchedAt: z.string().min(1),
+      generatedAt: z.string().min(1),
+      counts: z.object({ api: z.number().int(), agile: z.number().int(), xray: z.number().int() }),
+    }),
+    operations: z.array(operationSchema),
+  })
+  .superRefine((catalog, ctx) => {
+    // The server indexes operations by id: a duplicate would silently shadow another operation.
+    const seen = new Set<string>();
+    catalog.operations.forEach((op, index) => {
+      if (seen.has(op.id))
+        ctx.addIssue({
+          code: 'custom',
+          path: ['operations', index, 'id'],
+          message: 'duplicate id',
+        });
+      seen.add(op.id);
+    });
+    for (const family of API_FAMILIES) {
+      const actual = catalog.operations.filter((op) => op.api === family).length;
+      if (catalog.meta.counts[family] !== actual)
+        ctx.addIssue({
+          code: 'custom',
+          path: ['meta', 'counts', family],
+          message: `${catalog.meta.counts[family]} does not match the ${actual} operation(s) of the family`,
+        });
+    }
+  });
+
+/**
+ * Validates a parsed catalog with the schema the server applies at startup; the catalog build and
+ * check run it too, so that a catalog the server would refuse never passes CI.
+ */
+export function parseCatalog(json: unknown, label: string): CatalogFile {
+  const result = catalogSchema.safeParse(json);
+  if (!result.success) {
+    const issues = result.error.issues
+      .slice(0, 3)
+      .map((i) => `${i.path.join('.')}: ${i.message}`)
+      .join('; ');
+    throw new Error(`${label} is invalid: ${issues}`);
+  }
+  return result.data;
+}
 
 export async function loadCatalogFile(path: string = DEFAULT_CATALOG_PATH): Promise<CatalogFile> {
   let text: string;
@@ -82,13 +123,5 @@ export async function loadCatalogFile(path: string = DEFAULT_CATALOG_PATH): Prom
   } catch {
     throw new Error(`Operation catalog at ${path} is not valid JSON`);
   }
-  const result = catalogSchema.safeParse(json);
-  if (!result.success) {
-    const issues = result.error.issues
-      .slice(0, 3)
-      .map((i) => `${i.path.join('.')}: ${i.message}`)
-      .join('; ');
-    throw new Error(`Operation catalog at ${path} is invalid: ${issues}`);
-  }
-  return result.data;
+  return parseCatalog(json, `Operation catalog at ${path}`);
 }

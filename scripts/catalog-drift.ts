@@ -1,4 +1,3 @@
-import { readFile } from 'node:fs/promises';
 import { loadConfig } from '../src/config.ts';
 import { JiraClient } from '../src/http/jira-client.ts';
 import type { AccessDecisions, CatalogFile } from '../src/catalog/types.ts';
@@ -9,10 +8,9 @@ import {
   DECISIONS,
   SOURCE_LOCK,
   fetchSources,
+  readCatalogJson,
   type SourceLock,
 } from './lib/sources.ts';
-
-const readJson = async <T>(url: URL): Promise<T> => JSON.parse(await readFile(url, 'utf8')) as T;
 import { runScript } from './lib/run-script.ts';
 
 await runScript(async () => {
@@ -25,8 +23,14 @@ await runScript(async () => {
     maxResponseBytes: 20 * 1024 * 1024,
   });
 
-  const lock = await readJson<SourceLock>(SOURCE_LOCK);
-  const decisions = await readJson<AccessDecisions>(DECISIONS);
+  const lock = await readCatalogJson<SourceLock>(
+    SOURCE_LOCK,
+    'restore it from git, or create it by following README "Catalogue et revue" (first generation)',
+  );
+  const decisions = await readCatalogJson<AccessDecisions>(
+    DECISIONS,
+    'the decisions file is versioned: restore it from git',
+  );
   const { meta, xml } = await fetchSources(client);
   const { catalog, pending } = buildCatalog({ xml, decisions, meta, generatedAt: meta.fetchedAt });
   const problems = compareWithLock(meta, catalog, lock);
@@ -34,7 +38,7 @@ await runScript(async () => {
   console.error(
     `Jira: locked ${lock.jiraVersion} (build ${lock.jiraBuildNumber}, WADL ${lock.fetchedAt}) — live ${meta.jiraVersion} (build ${meta.jiraBuildNumber})`,
   );
-  const local = await readJson<CatalogFile>(CATALOG_JSON).catch(() => undefined);
+  const local = await readCatalogJson<CatalogFile>(CATALOG_JSON, '').catch(() => undefined);
   if (local)
     console.error(
       describeDiff(

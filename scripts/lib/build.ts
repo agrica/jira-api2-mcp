@@ -1,4 +1,6 @@
 import { createHash } from 'node:crypto';
+import { isDeepStrictEqual } from 'node:util';
+import { parseCatalog } from '../../src/catalog/load.ts';
 import {
   API_FAMILIES,
   type AccessDecisions,
@@ -8,7 +10,7 @@ import {
   type ParsedOperation,
 } from '../../src/catalog/types.ts';
 import { classifyOperations, type ReviewCandidate, type ReviewCategory } from './classify.ts';
-import type { CatalogDiff } from './diff.ts';
+import { diffOperations, formatDiff, type CatalogDiff } from './diff.ts';
 import type { FetchMeta, SourceLock } from './sources.ts';
 import { parseWadl } from './wadl.ts';
 
@@ -47,9 +49,15 @@ export function buildCatalog(input: {
   decisions: AccessDecisions;
   meta: FetchMeta;
   generatedAt: string;
+  /** Reference date of the decision checks (default: now). */
+  now?: Date;
+  /** Receives the WADL warnings (merged duplicates, ignored parameters); default: stderr. */
+  warn?: (message: string) => void;
 }): {
   catalog: CatalogFile;
   staleDecisions: string[];
+  /** Decisions for an optional family whose source is absent (e.g. Xray not installed): kept, not stale. */
+  dormantDecisions: string[];
   candidates: ReviewCandidate[];
   pending: ReviewCandidate[];
 } {
@@ -59,7 +67,7 @@ export function buildCatalog(input: {
   for (const s of input.meta.sources) {
     const text = input.xml.get(s.file);
     if (text === undefined) throw new Error(missingMessage(s.file));
-    const ops = parseWadl(text, s.api);
+    const ops = parseWadl(text, s.api, input.warn);
     for (const op of ops) {
       // The runtime indexes operations by id: a duplicate would silently shadow another source.
       const first = sourceOf.get(op.id);
@@ -76,25 +84,98 @@ export function buildCatalog(input: {
     counts[s.api] += ops.length;
     parsed.push(...ops);
   }
-  const { operations, staleDecisions, candidates, pending } = classifyOperations(
-    parsed,
-    input.decisions,
-  );
-  return {
-    catalog: {
-      meta: {
-        jiraVersion: input.meta.jiraVersion,
-        jiraBuildNumber: input.meta.jiraBuildNumber,
-        fetchedAt: input.meta.fetchedAt,
-        generatedAt: input.generatedAt,
-        counts,
-      },
-      operations,
+  const classified = classifyOperations(parsed, input.decisions, input.now);
+  const catalog: CatalogFile = {
+    meta: {
+      jiraVersion: input.meta.jiraVersion,
+      jiraBuildNumber: input.meta.jiraBuildNumber,
+      fetchedAt: input.meta.fetchedAt,
+      generatedAt: input.generatedAt,
+      counts,
     },
-    staleDecisions,
-    candidates,
-    pending,
+    operations: classified.operations,
   };
+  const empty = emptyFamilies(input.meta, catalog);
+  if (empty.length > 0) {
+    throw new Error(
+      `No operation for the ${empty.map((f) => `"${f}"`).join(', ')} family: its WADL source is missing from catalog/wadl/fetch-meta.json — run npm run catalog:fetch`,
+    );
+  }
+  // The server validates the catalog at startup: one it would refuse must fail here, not in production.
+  parseCatalog(JSON.parse(JSON.stringify(catalog)), 'The generated catalog');
+  // Without the Xray plugin, its decisions are dormant: Xray is optional, they are not stale.
+  const xrayAbsent = !input.meta.sources.some((s) => s.api === 'xray');
+  const dormant = (id: string) => xrayAbsent && (id.split(' ')[1] ?? '').startsWith(XRAY_PREFIX);
+  return {
+    catalog,
+    staleDecisions: classified.staleDecisions.filter((id) => !dormant(id)),
+    dormantDecisions: classified.staleDecisions.filter(dormant),
+    candidates: classified.candidates,
+    pending: classified.pending,
+  };
+}
+
+/** Local copy of the operations of the last lock (unversioned: it lists endpoints). */
+export interface LockBaseline {
+  operationsSha256: string;
+  jiraVersion: string;
+  operations: Operation[];
+}
+
+export type DiffBaseline =
+  | { kind: 'previous-lock'; jiraVersion: string; operations: readonly Operation[] }
+  | { kind: 'none' }
+  | { kind: 'unknown'; jiraVersion: string };
+
+/**
+ * What last-diff.md and `lastChange` compare with: the operations recorded by the lock. The lock
+ * stores only their digest, so the operations come from a local copy whose digest matches it
+ * (catalog/lock-baseline.json, written by --update-lock, or a catalog.json still equal to the lock).
+ * No lock: first generation, everything is added. No matching copy: unknown, never a wrong diff.
+ */
+export function selectBaseline(
+  lock: SourceLock | undefined,
+  copies: readonly ({ operations?: unknown } | undefined)[],
+): DiffBaseline {
+  if (!lock) return { kind: 'none' };
+  for (const copy of copies) {
+    const operations = copy?.operations;
+    if (Array.isArray(operations) && operationsDigest(operations) === lock.operationsSha256)
+      return { kind: 'previous-lock', jiraVersion: lock.jiraVersion, operations };
+  }
+  return { kind: 'unknown', jiraVersion: lock.jiraVersion };
+}
+
+/** The diff against the baseline, or undefined when the baseline is unknown. */
+export function diffAgainstBaseline(
+  baseline: DiffBaseline,
+  operations: readonly Operation[],
+): CatalogDiff | undefined {
+  if (baseline.kind === 'unknown') return undefined;
+  return diffOperations(baseline.kind === 'none' ? [] : baseline.operations, operations);
+}
+
+export function formatBaselineDiff(
+  baseline: DiffBaseline,
+  diff: CatalogDiff | undefined,
+  catalog: CatalogFile,
+): string {
+  const to = `Jira ${catalog.meta.jiraVersion} (${catalog.meta.fetchedAt})`;
+  if (baseline.kind === 'none')
+    return formatDiff(
+      diff ?? { added: [], removed: [], changed: [] },
+      `Première génération → ${to}`,
+    );
+  const title = `Catalogue verrouillé (Jira ${baseline.jiraVersion}) → ${to}`;
+  if (!diff) {
+    return [
+      `## ${title}`,
+      '',
+      'Référence inconnue : les opérations du verrou ne sont pas disponibles localement (ni `catalog/lock-baseline.json`, ni un `catalog/catalog.json` identique au verrou). Les opérations ajoutées, supprimées ou modifiées depuis le verrou ne peuvent pas être listées ; relisez le catalogue complet.',
+      '',
+    ].join('\n');
+  }
+  return formatDiff(diff, title);
 }
 
 /** Families that must have operations: api and agile always, others when their source is present. */
@@ -157,9 +238,10 @@ export function makeLock(
   meta: FetchMeta,
   catalog: CatalogFile,
   previous: SourceLock | undefined,
-  diff: CatalogDiff,
+  baseline: DiffBaseline,
   recordedAt: string,
 ): SourceLock {
+  const diff = diffAgainstBaseline(baseline, catalog.operations);
   return {
     ...meta,
     counts: catalog.meta.counts,
@@ -167,12 +249,24 @@ export function makeLock(
     lastChange: {
       fromVersion: previous?.jiraVersion ?? null,
       toVersion: meta.jiraVersion,
-      added: diff.added.length,
-      removed: diff.removed.length,
-      changed: diff.changed.length,
+      baseline: baseline.kind,
+      added: diff ? diff.added.length : null,
+      removed: diff ? diff.removed.length : null,
+      changed: diff ? diff.changed.length : null,
       recordedAt,
     },
   };
+}
+
+const lockContent = ({ fetchedAt: _f, lastChange: _l, ...rest }: SourceLock) => rest;
+
+/**
+ * Whether `next` locks the same thing as `previous`: same version, files, counts and operations.
+ * Only the fetch date and the last-change record may differ; the lock is then left untouched, so
+ * that a re-lock without change neither churns nor erases the record of the real last change.
+ */
+export function sameLockContent(previous: SourceLock | undefined, next: SourceLock): boolean {
+  return previous !== undefined && isDeepStrictEqual(lockContent(previous), lockContent(next));
 }
 
 const CATEGORY_HELP: Record<ReviewCategory, string> = {
