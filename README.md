@@ -7,7 +7,7 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 ## Portée
 
 - Environ 25 outils dédiés : recherche JQL, tickets, transitions, commentaires, worklogs, liens, pièces jointes, tableaux et sprints.
-- Les opérations **décrites dans les WADL de votre instance** pour **REST API v2**, **Agile 1.0** et **Xray** (si installé), via `jira_list_operations` → `jira_describe_operation` → `jira_call_read_operation` / `jira_call_write_operation`.
+- Les opérations **décrites dans les WADL de votre instance** pour **REST API v2**, **Agile 1.0** et **Xray** (si installé, et **désactivé par défaut** : voir `JIRA_ENABLE_XRAY`), via `jira_list_operations` → `jira_describe_operation` → `jira_call_read_operation` / `jira_call_write_operation`.
 
 **Non couvert :**
 
@@ -74,6 +74,9 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 | `JIRA_MAX_RESPONSE_BYTES`  | non    | `5242880`              | taille maximale d'une réponse HTTP                                                                  |
 | `JIRA_MAX_OUTPUT_CHARS`    | non    | `100000`               | taille maximale du texte rendu au modèle                                                            |
 | `JIRA_CATALOG_PATH`        | non    | `catalog/catalog.json` | emplacement du catalogue                                                                            |
+| `JIRA_ENABLE_XRAY`         | non    | `false`                | expose les opérations Xray du catalogue                                                             |
+
+`JIRA_ENABLE_XRAY` agit seulement sur le serveur. Le catalogue reste généré et revu avec les opérations Xray si le plugin est installé : on peut donc activer Xray plus tard sans régénérer le catalogue. Si l'option est activée mais que le catalogue ne contient aucune opération Xray, le serveur affiche un avertissement au démarrage.
 
 Une URL de base avec chemin de contexte est prise en charge, par exemple `https://jira.example.com/jira` (valeur fictive) : les chemins du catalogue restent en `/rest/...`.
 

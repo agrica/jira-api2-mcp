@@ -23,6 +23,7 @@ export interface ListedTool {
   name: string;
   description?: string;
   annotations?: ToolAnnotations;
+  inputSchema?: { properties?: Record<string, { enum?: unknown[] } | undefined> };
 }
 
 export interface Harness {
@@ -75,6 +76,7 @@ export async function createHarness(
       name: t.name,
       description: t.description,
       annotations: t.annotations,
+      inputSchema: t.inputSchema as ListedTool['inputSchema'],
     }));
   };
 

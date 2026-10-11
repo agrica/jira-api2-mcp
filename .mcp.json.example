@@ -6,7 +6,8 @@
       "env": {
         "JIRA_BASE_URL": "https://jira.example.com",
         "JIRA_PAT": "${JIRA_PAT}",
-        "JIRA_ALLOW_WRITES": "false"
+        "JIRA_ALLOW_WRITES": "false",
+        "JIRA_ENABLE_XRAY": "false"
       }
     }
   }

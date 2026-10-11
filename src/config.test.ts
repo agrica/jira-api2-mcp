@@ -23,6 +23,7 @@ describe('loadConfig', () => {
       maxResponseBytes: 5 * 1024 * 1024,
       maxOutputChars: 100_000,
       catalogPath: undefined,
+      enableXray: false,
     });
   });
 
@@ -30,6 +31,13 @@ describe('loadConfig', () => {
     expect(loadConfig({ ...base, JIRA_BASE_URL: 'https://jira.example.com/jira/' }).baseUrl).toBe(
       'https://jira.example.com/jira',
     );
+  });
+
+  it('enables the Xray APIs only when explicitly requested', () => {
+    expect(loadConfig({ ...base, JIRA_ENABLE_XRAY: 'true' }).enableXray).toBe(true);
+    expect(loadConfig({ ...base, JIRA_ENABLE_XRAY: '1' }).enableXray).toBe(true);
+    expect(loadConfig({ ...base, JIRA_ENABLE_XRAY: 'false' }).enableXray).toBe(false);
+    expect(() => loadConfig({ ...base, JIRA_ENABLE_XRAY: 'yes' })).toThrow(/JIRA_ENABLE_XRAY/);
   });
 
   it('enables writes only when explicitly requested', () => {

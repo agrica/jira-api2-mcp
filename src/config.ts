@@ -9,6 +9,7 @@ export interface JiraConfig {
   maxResponseBytes: number;
   maxOutputChars: number;
   catalogPath: string | undefined;
+  enableXray: boolean;
 }
 
 const flag = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1');
@@ -26,6 +27,7 @@ const envSchema = z.object({
     .default(5 * 1024 * 1024),
   JIRA_MAX_OUTPUT_CHARS: z.coerce.number().int().positive().default(100_000),
   JIRA_CATALOG_PATH: z.string().min(1).optional(),
+  JIRA_ENABLE_XRAY: flag.default(false),
 });
 
 function isPlainHttp(url: string): boolean {
@@ -54,6 +56,7 @@ export function loadConfig(env: Readonly<Record<string, string | undefined>>): J
     maxResponseBytes: e.JIRA_MAX_RESPONSE_BYTES,
     maxOutputChars: e.JIRA_MAX_OUTPUT_CHARS,
     catalogPath: e.JIRA_CATALOG_PATH,
+    enableXray: e.JIRA_ENABLE_XRAY,
   };
 }
 

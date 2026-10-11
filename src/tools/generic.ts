@@ -1,9 +1,24 @@
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
 import { CatalogError, describeOperation, type Catalog } from '../catalog/catalog.ts';
+import type { ApiFamily } from '../catalog/types.ts';
 import { DESTRUCTIVE, READ, defineTool, type ToolDeps } from './shared.ts';
 
 const scalar = z.union([z.string(), z.number(), z.boolean()]);
+const FAMILY_LABELS: Record<ApiFamily, { name: string; hint: string }> = {
+  api: { name: 'REST API v2', hint: 'api = REST v2' },
+  agile: { name: 'Agile 1.0', hint: 'agile = boards/sprints' },
+  xray: { name: 'Xray', hint: 'xray = tests' },
+};
+
+/** "A, B and C" */
+export function familyNames(families: readonly ApiFamily[]): string {
+  const names = families.map((family) => FAMILY_LABELS[family].name);
+  return names.length > 1
+    ? `${names.slice(0, -1).join(', ')} and ${names.at(-1)}`
+    : (names[0] ?? '');
+}
+
 const callInput = z.object({
   operationId: z.string().min(1).describe('e.g. "GET /rest/api/2/issue/{issueIdOrKey}"'),
   pathParams: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
@@ -29,16 +44,16 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
     'jira_list_operations',
     {
       title: 'List Jira REST operations',
-      description: `Search the ${catalog.size} operations described by the ${source} for REST API v2, Agile 1.0 and Xray if installed (other REST families are not covered). All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); "not individually reviewed" in its reason means the class comes from the HTTP method only.`,
+      description: `Search the ${catalog.size} operations described by the ${source} for ${familyNames(catalog.families)} (other REST families are not covered${catalog.families.includes('xray') ? '' : '; Xray is disabled on this server'}). All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); "not individually reviewed" in its reason means the class comes from the HTTP method only.`,
       inputSchema: z.object({
         query: z
           .string()
           .optional()
           .describe('Keywords, e.g. "worklog", "sprint issue", "version"'),
         api: z
-          .enum(['api', 'agile', 'xray'])
+          .enum(catalog.families as [ApiFamily, ...ApiFamily[]])
           .optional()
-          .describe('api = REST v2, agile = boards/sprints, xray = tests'),
+          .describe(catalog.families.map((family) => FAMILY_LABELS[family].hint).join(', ')),
         method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional(),
         access: z.enum(['read', 'write', 'destructive']).optional(),
         limit: z.number().int().min(1).max(100).default(20),

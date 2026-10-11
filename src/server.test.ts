@@ -73,6 +73,23 @@ describe('createServer', () => {
     expect(await h.listToolNames()).toEqual(expect.arrayContaining(WRITE_TOOLS));
   });
 
+  it('describes Xray only when its family is enabled', async () => {
+    const listOperations = async (families?: Operation['api'][]) => {
+      const c = new Catalog([op('GET /rest/api/2/serverInfo', 'read')], undefined, families);
+      h = await createHarness((deps) => createServer({ ...deps, catalog: c }));
+      const tool = (await h.listTools()).find((t) => t.name === 'jira_list_operations');
+      await h.close();
+      return tool;
+    };
+    const disabled = await listOperations(['api', 'agile']);
+    expect(disabled?.inputSchema?.properties?.api?.enum).toEqual(['api', 'agile']);
+    expect(disabled?.description).toMatch(/REST API v2 and Agile 1.0 .*Xray is disabled/);
+    const enabled = await listOperations(['api', 'agile', 'xray']);
+    expect(enabled?.inputSchema?.properties?.api?.enum).toEqual(['api', 'agile', 'xray']);
+    expect(enabled?.description).toMatch(/REST API v2, Agile 1.0 and Xray \(other/);
+    h = await createHarness((deps) => createServer({ ...deps, catalog }));
+  });
+
   it('serves an end-to-end read through the catalog', async () => {
     h = await createHarness((deps) => createServer({ ...deps, catalog }));
     h.fetchMock.mockResolvedValueOnce(jsonResponse({ version: '8.20.0' }));

@@ -79,15 +79,33 @@ export function describeOperation(op: Operation): Operation & { notes: string[] 
   };
 }
 
+export const ALL_FAMILIES: readonly ApiFamily[] = ['api', 'agile', 'xray'];
+
+/** Families exposed by the server: Xray only when JIRA_ENABLE_XRAY=true. */
+export function enabledFamilies(enableXray: boolean): ApiFamily[] {
+  return ALL_FAMILIES.filter((family) => family !== 'xray' || enableXray);
+}
+
 export class Catalog {
   readonly meta: CatalogMeta | undefined;
+  readonly families: readonly ApiFamily[];
   readonly #operations: readonly Operation[];
+  readonly #disabled: ReadonlyMap<string, Operation>;
   readonly #byId: ReadonlyMap<string, Operation>;
   readonly #haystacks: ReadonlyMap<string, string>;
 
-  constructor(operations: readonly Operation[], meta?: CatalogMeta) {
+  constructor(
+    allOperations: readonly Operation[],
+    meta?: CatalogMeta,
+    families: readonly ApiFamily[] = ALL_FAMILIES,
+  ) {
     this.meta = meta;
+    this.families = ALL_FAMILIES.filter((family) => families.includes(family));
+    const operations = allOperations.filter((op) => this.families.includes(op.api));
     this.#operations = operations;
+    this.#disabled = new Map(
+      allOperations.filter((op) => !this.families.includes(op.api)).map((op) => [op.id, op]),
+    );
     this.#byId = new Map(operations.map((op) => [op.id, op]));
     this.#haystacks = new Map(
       operations.map((op) => [op.id, normalizeForSearch(`${op.id} ${op.summary}`)]),
@@ -104,6 +122,12 @@ export class Catalog {
 
   require(id: string): Operation {
     const op = this.get(id);
+    const disabled = op ? undefined : this.#disabled.get(id.trim());
+    if (disabled)
+      throw new CatalogError(
+        `Operation "${disabled.id}" belongs to the ${disabled.api} API family, which is disabled on this server` +
+          (disabled.api === 'xray' ? ' (enable it with JIRA_ENABLE_XRAY=true).' : '.'),
+      );
     if (!op)
       throw new CatalogError(
         `Unknown operation "${id}". Use jira_list_operations to find a valid operationId.`,

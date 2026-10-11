@@ -1,7 +1,7 @@
 import { McpServer } from '@modelcontextprotocol/server';
 import type { Catalog } from './catalog/catalog.ts';
 import { registerAgileTools } from './tools/agile.ts';
-import { registerGenericTools } from './tools/generic.ts';
+import { familyNames, registerGenericTools } from './tools/generic.ts';
 import { registerIssueReadTools } from './tools/issues-read.ts';
 import { registerIssueWriteTools } from './tools/issues-write.ts';
 import { registerMetadataTools } from './tools/metadata.ts';
@@ -20,7 +20,11 @@ function instructions(deps: ServerDeps): string {
       : 'This server is READ-ONLY: write tools are not available.',
     'Prefer the dedicated jira_* tools. Otherwise find an operation with jira_list_operations, check it with jira_describe_operation,',
     'then call it with jira_call_read_operation (or jira_call_write_operation when writes are enabled).',
-    'The catalog covers REST API v2, Agile 1.0 and Xray (if installed) as described by the instance WADL only.',
+    `The catalog covers ${familyNames(deps.catalog.families)} as described by the instance WADL only${
+      deps.catalog.families.includes('xray')
+        ? ' (Xray only if installed)'
+        : '; the Xray APIs are disabled on this server'
+    }.`,
     'Custom field ids (customfield_NNNNN) can be looked up with jira_list_fields.',
   ].join(' ');
 }

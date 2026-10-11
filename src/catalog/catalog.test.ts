@@ -92,6 +92,34 @@ describe('Catalog lookup and search', () => {
   });
 });
 
+describe('Catalog — enabled API families', () => {
+  const xrayOp: Operation = {
+    ...base,
+    id: 'GET /rest/raven/1.0/api/test',
+    api: 'xray',
+    method: 'GET',
+    path: '/rest/raven/1.0/api/test',
+    access: 'read',
+    params: [],
+  };
+
+  it('keeps every family by default', () => {
+    const all = new Catalog([...OPS, xrayOp], meta);
+    expect(all.families).toEqual(['api', 'agile', 'xray']);
+    expect(all.size).toBe(5);
+    expect(all.require(xrayOp.id)).toBe(xrayOp);
+  });
+
+  it('hides the operations of disabled families and explains why they cannot be used', () => {
+    const noXray = new Catalog([...OPS, xrayOp], meta, ['api', 'agile']);
+    expect(noXray.families).toEqual(['api', 'agile']);
+    expect(noXray.size).toBe(4);
+    expect(noXray.get(xrayOp.id)).toBeUndefined();
+    expect(noXray.search({ query: 'raven' }).total).toBe(0);
+    expect(() => noXray.require(xrayOp.id)).toThrow(/xray.*disabled.*JIRA_ENABLE_XRAY=true/i);
+  });
+});
+
 describe('Catalog.buildRequest — path parameters', () => {
   it('fills, encodes and carries the access class', () => {
     expect(
