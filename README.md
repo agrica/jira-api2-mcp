@@ -15,6 +15,7 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 - [Sécurité](#sécurité)
 - [Catalogue et revue](#catalogue-et-revue)
 - [CI (GitHub Actions)](#ci-github-actions)
+- [Versions et dépendances](#versions-et-dépendances)
 - [Développement](#développement)
 - [Dépannage](#dépannage)
 - [Notes Jira Server / Data Center](#notes-jira-server--data-center)
@@ -54,7 +55,7 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 
 ## Installation
 
-Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Deux façons d'obtenir un serveur prêt à l'emploi :
+Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Trois façons d'obtenir un serveur prêt à l'emploi :
 
 ### A. Depuis le paquet produit par la CI
 
@@ -72,7 +73,22 @@ Si le dépôt publie le paquet (voir « CI »), il contient déjà `dist/` et le
 
 On utilise `npm install` et non `npm ci`, parce qu'un paquet produit par `npm pack` ne contient pas `package-lock.json`. Les dépendances directes sont figées par version exacte dans `package.json` ; les dépendances transitives sont résolues au moment de l'installation, d'où le `npm audit`.
 
-### B. Depuis les sources
+### B. Depuis une release GitHub (paquet générique)
+
+Chaque version publiée (voir « Versions et dépendances ») joint à sa release GitHub le paquet `jira-mcp-<version>.tgz` et un fichier `SHA256SUMS.txt`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
+
+1. Téléchargez les deux fichiers depuis la page _Releases_ du dépôt, ou avec `gh release download v<version> -p 'jira-mcp-*.tgz' -p SHA256SUMS.txt`.
+2. Vérifiez l'empreinte, puis installez :
+   ```bash
+   sha256sum -c SHA256SUMS.txt
+   tar -xzf jira-mcp-<version>.tgz        # crée le dossier package/
+   cd package
+   npm install --omit=dev
+   npm audit --omit=dev
+   ```
+3. Fournissez le catalogue de votre instance : générez-le depuis les sources (méthode C, étapes `catalog:*`) puis copiez `catalog/catalog.json` dans `package/catalog/`, ou indiquez son emplacement avec `JIRA_CATALOG_PATH`.
+
+### C. Depuis les sources
 
 Le PAT n'est utilisé qu'en lecture pour télécharger les WADL.
 
@@ -425,6 +441,27 @@ Placez alors le runner dans un réseau qui atteint l'instance, installez l'autor
 Si `JIRA_CI_ENABLED` ne vaut pas `true`, le job Jira est ignoré ; il l'est aussi pour toutes les pull requests et pour Dependabot. Une pull request n'exécute que le job `static`, sans secret.
 
 **Paquet.** Le job crée le paquet avec `npm run package` (recompilation complète de `dist/`), puis `scripts/check-package.ts` vérifie son contenu : fichiers attendus présents (`package.json`, `README.md`, `dist/index.js` avec sa ligne `#!/usr/bin/env node`, `dist/catalog/load.js`, `catalog/catalog.json`), aucun fichier hors liste, ni PAT, ni nom d'hôte de l'instance.
+
+## Versions et dépendances
+
+**Dependabot** (`.github/dependabot.yml`) ouvre chaque lundi des pull requests de mise à jour :
+
+- **npm** : la version épinglée est remplacée par la nouvelle (`versioning-strategy: increase`, les versions restent exactes) ; les mises à jour mineures et correctives des outils de développement sont regroupées dans une seule pull request, les dépendances d'exécution (`@modelcontextprotocol/server`, `zod`) arrivent séparément ;
+- **GitHub Actions** : les actions des workflows, regroupées.
+
+Ces pull requests n'exécutent que le job `static` (format, lint, types, tests, recherche de secrets), sans aucun secret. Relisez le journal des modifications d'une dépendance d'exécution avant de fusionner. Activez aussi les _Dependabot alerts_ et _security updates_ dans _Settings › Code security_ pour recevoir les alertes de vulnérabilité.
+
+**Publier une version** (workflow `.github/workflows/release.yml`) :
+
+1. Sur `main` à jour, avec une CI verte : `npm version patch` (ou `minor`, `major`, `prerelease --preid rc`). La commande met à jour `package.json` et `package-lock.json`, crée le commit et le tag `v<version>`.
+2. Poussez le commit et le tag : `git push --follow-tags`.
+3. Le workflow `release`, déclenché par le tag `v*.*.*` :
+   - vérifie que le tag correspond à la version de `package.json` ;
+   - relance `npm run check` ;
+   - crée le paquet avec `npm run package` et le contrôle (`check-package --no-catalog`) ;
+   - publie la release GitHub avec le paquet, `SHA256SUMS.txt` et des notes générées à partir des pull requests. Un tag contenant `-` (par exemple `v1.2.0-rc.1`) produit une _pre-release_.
+
+Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec le droit `contents: write`. La release ne contient **jamais** de catalogue ni d'information sur une instance.
 
 ## Développement
 

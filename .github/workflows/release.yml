@@ -1,0 +1,60 @@
+# Publishes a GitHub release when a version tag (vX.Y.Z, e.g. created by `npm version`) is pushed.
+# The release carries the generic package only: the operation catalog is specific to each Jira
+# instance and is never published (generate it locally, or take the CI artifact of a private
+# repository). No Jira secret is used here.
+name: release
+
+on:
+  push:
+    tags: ['v*.*.*']
+
+permissions:
+  contents: read
+
+concurrency:
+  group: release-${{ github.ref }}
+  cancel-in-progress: false
+
+jobs:
+  release:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    permissions:
+      contents: write # create the release and upload its assets
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11'
+          cache: npm
+
+      - name: Check that the tag matches package.json
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          if [ "v$version" != "$GITHUB_REF_NAME" ]; then
+            echo "::error::tag $GITHUB_REF_NAME does not match package.json version $version"
+            exit 1
+          fi
+
+      - run: npm ci
+      - run: npm run check
+
+      - name: Pack (clean build, no catalog)
+        run: npm run package
+
+      - name: Check the package (expected files, no secret)
+        run: node scripts/check-package.ts --no-catalog jira-mcp-*.tgz
+
+      - name: Checksums
+        run: sha256sum jira-mcp-*.tgz > SHA256SUMS.txt
+
+      - name: Create the GitHub release
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: |
+          prerelease=""
+          case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
+          gh release create "$GITHUB_REF_NAME" jira-mcp-*.tgz SHA256SUMS.txt \
+            --title "jira-mcp $GITHUB_REF_NAME" --generate-notes --verify-tag $prerelease

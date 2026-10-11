@@ -1,0 +1,32 @@
+# Dependency update pull requests. Dependabot PRs run only the "static" CI job: they never
+# receive the Jira secrets (see ci.yml).
+version: 2
+updates:
+  - package-ecosystem: npm
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    # Versions are pinned exactly (.npmrc save-exact): bump the pinned version, never widen a range.
+    versioning-strategy: increase
+    commit-message:
+      prefix: deps
+      prefix-development: deps-dev
+    groups:
+      # Tooling updates arrive together; runtime dependencies stay in separate PRs.
+      dev-tooling:
+        dependency-type: development
+        update-types: [minor, patch]
+
+  - package-ecosystem: github-actions
+    directory: /
+    schedule:
+      interval: weekly
+      day: monday
+    open-pull-requests-limit: 5
+    commit-message:
+      prefix: ci
+    groups:
+      github-actions:
+        patterns: ['*']
