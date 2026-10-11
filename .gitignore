@@ -1,2 +1,17 @@
 # graft's local graph cache — regenerable, not committed (run `graft build`).
 /graft/
+node_modules/
+dist/
+coverage/
+*.tgz
+.env
+.env.*
+# configuration MCP locale : peut contenir des valeurs propres au poste
+.mcp.json
+
+# Inventaire des endpoints de l'instance : non versionné (mode B, décision H7).
+# Mode A (si H7 est confirmée positivement) : supprimer les quatre lignes suivantes.
+catalog/wadl/
+catalog/catalog.json
+catalog/last-diff.md
+catalog/review.md

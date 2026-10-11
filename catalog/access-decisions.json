@@ -1,0 +1,8 @@
+{
+  "POST /rest/api/2/search": {
+    "access": "read",
+    "reason": "JQL search sent as POST for long queries; returns issues, no side effect (Atlassian REST v2 docs)",
+    "reviewedBy": "<identité git du relecteur>",
+    "reviewedOn": "2026-10-11"
+  }
+}

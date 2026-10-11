@@ -1,0 +1,98 @@
+# Generic CI: no organisation, instance URL or credential is hard-coded.
+# Repository settings (all names are examples): secrets JIRA_READONLY_PAT and JIRA_BASE_URL
+# (a secret, so that GitHub masks the instance URL in logs; repository variables are not masked);
+# variables JIRA_CI_ENABLED ('true' to run the Jira job), SMOKE_PROJECT, JIRA_RUNNER_LABEL, PUBLISH_ARTIFACT.
+name: ci
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: ${{ github.event_name == 'pull_request' }}
+
+jobs:
+  static:
+    # No secret, no Jira access, no generated catalog needed.
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11'
+          cache: npm
+      - run: npm ci
+      - run: npm run check
+
+  catalog-and-package:
+    needs: static
+    # Skipped unless enabled (a job-level if cannot read secrets), and for pull requests from forks (secrets are not available there).
+    if: >-
+      vars.JIRA_CI_ENABLED == 'true' &&
+      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    # GitHub-hosted only if the instance is reachable from the Internet with a public CA;
+    # otherwise a self-hosted runner inside a network that reaches it and trusts its CA.
+    runs-on: ${{ vars.JIRA_RUNNER_LABEL || 'ubuntu-latest' }}
+    timeout-minutes: 30
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          persist-credentials: false
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.11'
+          cache: npm
+      - run: npm ci
+
+      # The PAT and the instance URL (both secrets) are passed only to the steps that call Jira or look for their value.
+      - name: Fetch WADL (read-only PAT)
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_PAT: ${{ secrets.JIRA_READONLY_PAT }}
+        run: npm run catalog:fetch
+
+      - name: Build and check the catalog
+        run: npm run catalog:build && npm run catalog:check
+
+      - name: Build
+        run: npm run build
+
+      - name: Smoke test (read-only)
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_PAT: ${{ secrets.JIRA_READONLY_PAT }}
+          SMOKE_PROJECT: ${{ vars.SMOKE_PROJECT }}
+        run: npm run smoke
+
+      - name: Pack
+        run: npm pack
+
+      - name: Check the package (expected files, no PAT, no instance host)
+        env:
+          JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
+          JIRA_PAT: ${{ secrets.JIRA_READONLY_PAT }}
+        run: node scripts/check-package.ts jira-mcp-*.tgz
+
+      # Anyone with read access to the repository can download artifacts: private or internal repositories only.
+      - name: Keep the package
+        if: vars.PUBLISH_ARTIFACT == 'true'
+        uses: actions/upload-artifact@v4
+        with:
+          name: jira-mcp-package
+          path: jira-mcp-*.tgz
+          retention-days: 14
+          if-no-files-found: error
+
+      # Matters on self-hosted runners, whose workspace persists between jobs.
+      - name: Remove the endpoint inventory from the workspace
+        if: always()
+        run: rm -rf catalog/wadl catalog/catalog.json catalog/last-diff.md catalog/review.md dist jira-mcp-*.tgz

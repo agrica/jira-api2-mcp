@@ -1,0 +1,51 @@
+{
+  "name": "jira-mcp",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Generic MCP server for Jira Server / Data Center 8.x (REST API v2)",
+  "bin": {
+    "jira-mcp": "./dist/index.js"
+  },
+  "files": [
+    "dist",
+    "catalog/catalog.json"
+  ],
+  "type": "module",
+  "scripts": {
+    "build": "tsc -p tsconfig.build.json",
+    "typecheck": "tsc --noEmit",
+    "lint": "oxlint",
+    "format": "oxfmt",
+    "format:check": "oxfmt --check",
+    "test": "vitest run",
+    "test:watch": "vitest",
+    "coverage": "vitest run --coverage",
+    "check": "npm run format:check && npm run lint && npm run typecheck && npm run coverage && npm run secrets:scan",
+    "verify": "npm run check && npm run catalog:check",
+    "catalog:fetch": "node --use-system-ca scripts/fetch-wadl.ts",
+    "catalog:build": "node scripts/build-catalog.ts",
+    "catalog:check": "node scripts/check-catalog.ts",
+    "smoke": "node --use-system-ca scripts/smoke-readonly.ts",
+    "catalog:drift": "node --use-system-ca scripts/catalog-drift.ts",
+    "secrets:scan": "node scripts/scan-secrets.ts",
+    "start": "node --use-system-ca dist/index.js",
+    "dev": "node --use-system-ca --watch src/index.ts"
+  },
+  "dependencies": {
+    "@modelcontextprotocol/server": "2.3.1",
+    "zod": "4.6.5"
+  },
+  "devDependencies": {
+    "@modelcontextprotocol/client": "2.3.1",
+    "@types/node": "24.19.2",
+    "@vitest/coverage-v8": "5.0.3",
+    "fast-xml-parser": "5.11.2",
+    "oxfmt": "0.72.0",
+    "oxlint": "1.87.0",
+    "typescript": "7.0.2",
+    "vitest": "5.0.3"
+  },
+  "engines": {
+    "node": ">=24.11.0"
+  }
+}
