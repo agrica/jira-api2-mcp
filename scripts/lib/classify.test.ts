@@ -189,6 +189,18 @@ describe('decisionProblems — every decision validated, with the decision named
     ]);
   });
 
+  it('requires ids of the form "<METHOD> /rest/…"', () => {
+    for (const id of [
+      'post /rest/api/2/search',
+      'GET /plugins/servlet/x',
+      'TRACE /rest/api/2/x',
+      'search',
+    ])
+      expect(check(good, id)).toEqual([
+        `Access decision for ${id}: the id must be "<METHOD> /rest/…" with METHOD one of GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS`,
+      ]);
+  });
+
   it('makes classifyOperations throw every problem, never a raw TypeError', () => {
     const missing = { access: 'read' } as unknown as AccessDecision;
     expect(() => classifyOperations(PARSED, { 'POST /rest/api/2/search': missing }, NOW)).toThrow(

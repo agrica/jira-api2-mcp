@@ -146,6 +146,28 @@ export function selectBaseline(
   return { kind: 'unknown', jiraVersion: lock.jiraVersion };
 }
 
+/**
+ * The baseline for catalog:build. Candidates, in order: the copy written by --update-lock, the
+ * previous local catalog.json, then the catalog just built (on a fresh clone whose WADL still match
+ * the lock, it is the locked catalog itself, so the diff is rightly empty).
+ */
+export function chooseBaseline(
+  lock: SourceLock | undefined,
+  local: { copy?: unknown; previous?: CatalogFile; built?: CatalogFile },
+): DiffBaseline {
+  const copy = typeof local.copy === 'object' && local.copy !== null ? local.copy : undefined;
+  return selectBaseline(lock, [copy, local.previous, local.built]);
+}
+
+/** A parsed local catalog.json, or undefined when it is not a valid catalog (e.g. `{}`). */
+export function asCatalog(json: unknown): CatalogFile | undefined {
+  try {
+    return parseCatalog(json, 'catalog/catalog.json');
+  } catch {
+    return undefined;
+  }
+}
+
 /** The diff against the baseline, or undefined when the baseline is unknown. */
 export function diffAgainstBaseline(
   baseline: DiffBaseline,

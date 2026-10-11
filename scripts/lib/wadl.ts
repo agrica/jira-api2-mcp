@@ -259,8 +259,13 @@ function mergeOperations(first: ParsedOperation, second: ParsedOperation): Parse
       known
         ? {
             ...known,
+            // Conflicting types: string accepts both, Jira checks the value.
+            type: known.type === p.type ? known.type : 'string',
             required: known.required || p.required,
             repeating: known.repeating || p.repeating,
+            ...(known.default === undefined && p.default !== undefined
+              ? { default: p.default }
+              : {}),
           }
         : p,
     );
@@ -319,7 +324,8 @@ export function parseWadl(
   warn: (message: string) => void = (message) => console.error(message),
 ): ParsedOperation[] {
   const state: WalkState = { api, out: [], ignoredParams: 0 };
-  for (const resources of parseRoot(xml, api)) {
+  // An extra empty `<resources/>` (no `<resource>`) declares nothing: its base is not needed.
+  for (const resources of parseRoot(xml, api).filter((r) => (r.resource ?? []).length > 0)) {
     const pathname = basePathname(resources.base, api);
     // Under a context path (https://host/jira/rest/...), operation paths start at /rest/: the
     // client prepends JIRA_BASE_URL, which already carries the context path.
@@ -339,7 +345,7 @@ export function parseWadl(
     warn(`⚠ ${api} WADL: ${duplicates} duplicate method + path declaration(s) merged`);
   if (state.ignoredParams > 0)
     warn(
-      `⚠ ${api} WADL: ${state.ignoredParams} matrix / header parameter(s) ignored (the generic tools cannot send them)`,
+      `⚠ ${api} WADL: ${state.ignoredParams} matrix / header / plain parameter(s) ignored (the generic tools cannot send them)`,
     );
   return [...byId.values()].toSorted((a, b) => (a.id < b.id ? -1 : a.id > b.id ? 1 : 0));
 }

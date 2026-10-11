@@ -24,7 +24,7 @@ const fail = (problems: readonly string[]): void => {
 await runScript(async () => {
   const lock = await readCatalogJson<SourceLock>(
     SOURCE_LOCK,
-    'run npm run catalog:build -- --update-lock (first generation)',
+    'restore it from git, or for a first generation run npm run catalog:build -- --update-lock',
   );
   const decisions = await readCatalogJson<AccessDecisions>(
     DECISIONS,

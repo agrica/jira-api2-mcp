@@ -1,3 +1,7 @@
+import { mkdtemp, writeFile } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { pathToFileURL } from 'node:url';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { JiraClient, type FetchLike } from '../../src/http/jira-client.ts';
 import { fetchSources, readCatalogJson, readLockIfAny } from './sources.ts';
@@ -126,12 +130,21 @@ describe('readCatalogJson / readLockIfAny', () => {
     );
   });
 
-  it('reads valid JSON, and a lock that does not exist yet is undefined', async () => {
+  it('reads valid JSON', async () => {
     expect(
       await readCatalogJson<Record<string, unknown>>(new URL('access-decisions.json', dir), ''),
     ).toBeTypeOf('object');
-    // The repository has no lock until the first generation; either way, no throw for ENOENT.
-    const lock = await readLockIfAny();
-    expect(lock === undefined || typeof lock === 'object').toBe(true);
+  });
+});
+
+describe('readLockIfAny — injected location', () => {
+  it('returns undefined for a missing lock and refuses a corrupt one', async () => {
+    const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-lock-'));
+    const url = pathToFileURL(join(dir, 'source-lock.json'));
+    await expect(readLockIfAny(url)).resolves.toBeUndefined();
+    await writeFile(url, '{oops');
+    await expect(readLockIfAny(url)).rejects.toThrow(/is not valid JSON — restore it from git/);
+    await writeFile(url, '{"jiraVersion":"8.20.0"}');
+    await expect(readLockIfAny(url)).resolves.toEqual({ jiraVersion: '8.20.0' });
   });
 });

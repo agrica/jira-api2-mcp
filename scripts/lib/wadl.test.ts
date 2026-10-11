@@ -291,7 +291,7 @@ describe('parseWadl — duplicates, parameters, media types and docs', () => {
       { name: 'd', in: 'query', type: 'number', required: false, repeating: false },
     ]);
     expect(warn).toHaveBeenCalledWith(
-      '⚠ api WADL: 2 matrix / header parameter(s) ignored (the generic tools cannot send them)',
+      '⚠ api WADL: 2 matrix / header / plain parameter(s) ignored (the generic tools cannot send them)',
     );
   });
 
@@ -315,5 +315,54 @@ describe('parseWadl — duplicates, parameters, media types and docs', () => {
       'api',
     );
     expect(ops.map((o) => o.summary)).toEqual(['Get issue by key', 'Get things']);
+  });
+});
+
+describe('parseWadl — wave 2 review follow-ups', () => {
+  it('merges a parameter declared with two types as string and keeps the first defined default', () => {
+    const [op] = parseWadl(
+      wrap(`
+<resource path="dup"><method name="GET"><request>
+  <param name="a" style="query" type="xs:int"/>
+  <param name="b" style="query" type="xs:int"/>
+</request></method></resource>
+<resource path="dup/"><method name="GET"><request>
+  <param name="a" style="query" type="xs:boolean" default="true"/>
+  <param name="b" style="query" type="xs:long" default="5"/>
+</request></method></resource>`),
+      'api',
+      vi.fn<(message: string) => void>(),
+    );
+    expect(op?.params).toEqual([
+      {
+        name: 'a',
+        in: 'query',
+        type: 'string',
+        required: false,
+        repeating: false,
+        default: 'true',
+      },
+      { name: 'b', in: 'query', type: 'integer', required: false, repeating: false, default: '5' },
+    ]);
+  });
+
+  it('skips an extra empty <resources/> without a base', () => {
+    const xml = `<application>
+  <resources base="https://jira.example.com/rest/api/2/"><resource path="x"><method name="GET"/></resource></resources>
+  <resources/>
+</application>`;
+    expect(parseWadl(xml, 'api').map((o) => o.id)).toEqual(['GET /rest/api/2/x']);
+  });
+
+  it('names plain parameters in the ignored-parameter warning', () => {
+    const warn = vi.fn<(message: string) => void>();
+    parseWadl(
+      wrap('<resource path="r"><param name="p" style="plain"/><method name="GET"/></resource>'),
+      'api',
+      warn,
+    );
+    expect(warn).toHaveBeenCalledWith(
+      '⚠ api WADL: 1 matrix / header / plain parameter(s) ignored (the generic tools cannot send them)',
+    );
   });
 });

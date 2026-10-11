@@ -1,6 +1,8 @@
 import { describe, expect, it, vi } from 'vitest';
 import {
+  asCatalog,
   buildCatalog,
+  chooseBaseline,
   compareWithLock,
   diffAgainstBaseline,
   formatBaselineDiff,
@@ -451,5 +453,30 @@ describe('lock-based diff (build, then build -- --update-lock)', () => {
     expect(sameLockContent(undefined, again)).toBe(false);
     const upgraded = makeLock(meta2, v2.catalog, lock, { kind: 'none' }, 'R3');
     expect(sameLockContent(lock, upgraded)).toBe(false);
+  });
+});
+
+describe('wave 2 review follow-ups (build)', () => {
+  const v1 = buildCatalog({ xml: XML, decisions: searchDecision, meta: meta(), generatedAt: 'G' });
+  const lock = makeLock(meta(), v1.catalog, undefined, { kind: 'none' }, 'R1');
+
+  it('treats a local catalog.json of the wrong shape as absent instead of crashing', () => {
+    expect(asCatalog({})).toBeUndefined();
+    expect(asCatalog({ meta: {} })).toBeUndefined();
+    expect(asCatalog(null)).toBeUndefined();
+    expect(asCatalog(JSON.parse(JSON.stringify(v1.catalog)))).toEqual(v1.catalog);
+  });
+
+  it('on a fresh clone, uses the freshly built catalog when it equals the lock (empty diff)', () => {
+    const baseline = chooseBaseline(lock, { built: v1.catalog });
+    expect(baseline.kind).toBe('previous-lock');
+    expect(diffAgainstBaseline(baseline, v1.catalog.operations)).toEqual({
+      added: [],
+      removed: [],
+      changed: [],
+    });
+    // The local copies come first; nothing matching gives unknown.
+    expect(chooseBaseline(lock, {}).kind).toBe('unknown');
+    expect(chooseBaseline(undefined, { built: v1.catalog }).kind).toBe('none');
   });
 });

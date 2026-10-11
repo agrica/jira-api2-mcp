@@ -61,6 +61,7 @@ const DECISION_FIELDS: ReadonlySet<string> = new Set([
   'reviewedOn',
 ]);
 const DAY_MS = 86_400_000;
+const DECISION_ID = /^(?:GET|POST|PUT|DELETE|PATCH|HEAD|OPTIONS) \/rest\//;
 
 /** Values that stand for "to be filled in": `<…>`, TODO, TBD, FIXME, ?, x, xxx, n/a, none, unknown. */
 const PLACEHOLDER = /^(?:<[^>]*>|(?:todo|tbd|fixme)(?:\b.*)?|\?+|x+|n\/?a|none|unknown|-+|\.+)$/i;
@@ -92,6 +93,10 @@ function dateProblem(value: unknown, now: Date): string | undefined {
 function decisionFieldProblems(id: string, raw: unknown, now: Date): string[] {
   if (typeof raw !== 'object' || raw === null || Array.isArray(raw))
     return ['must be an object with access, reason, reviewedBy and reviewedOn'];
+  if (!DECISION_ID.test(id))
+    return [
+      'the id must be "<METHOD> /rest/…" with METHOD one of GET, POST, PUT, DELETE, PATCH, HEAD, OPTIONS',
+    ];
   const d = raw as Record<string, unknown>;
   const problems: string[] = [];
   for (const key of Object.keys(d))

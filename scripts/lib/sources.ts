@@ -87,9 +87,9 @@ export async function readCatalogJson<T>(url: URL, hint: string): Promise<T> {
 }
 
 /** The lock, or undefined when there is none yet; a corrupt lock is an error, not a first generation. */
-export async function readLockIfAny(): Promise<SourceLock | undefined> {
+export async function readLockIfAny(url: URL = SOURCE_LOCK): Promise<SourceLock | undefined> {
   try {
-    return await readCatalogJson<SourceLock>(SOURCE_LOCK, 'restore it from git');
+    return await readCatalogJson<SourceLock>(url, 'restore it from git');
   } catch (error) {
     if ((error as { cause?: NodeJS.ErrnoException }).cause?.code === 'ENOENT') return undefined;
     throw error;

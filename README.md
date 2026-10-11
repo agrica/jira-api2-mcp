@@ -361,11 +361,11 @@ Exemple :
 **Première génération, ou après une mise à jour de Jira ou d'un plugin :**
 
 1. `catalog:drift` (sauf la première fois) ;
-2. `catalog:fetch`, puis `catalog:build` ;
-3. décider chaque candidat listé dans `catalog/review.md`, dans `catalog/access-decisions.json` (raison, relecteur, date) ;
-   - **la première fois**, relire aussi la décision livrée pour `POST /rest/api/2/search` et remplacer son relecteur modèle `<identité git du relecteur>` par votre identité git, et sa date par celle de la relecture : sinon `catalog:build` s'arrête avec « replace the placeholder reviewer in catalog/access-decisions.json after reviewing the decision » ;
-4. `catalog:build -- --update-lock`, puis `npm run verify` ;
-5. pull request relue par une seconde personne.
+2. **la première fois, avant tout `catalog:build`** : relire la décision livrée pour `POST /rest/api/2/search` dans `catalog/access-decisions.json`, remplacer son relecteur modèle `<identité git du relecteur>` par votre identité git, et sa date par celle de la relecture ; sinon `catalog:build` s'arrête avec « replace the placeholder reviewer in catalog/access-decisions.json after reviewing the decision » ;
+3. `catalog:fetch`, puis `catalog:build` ;
+4. décider chaque candidat listé dans `catalog/review.md`, dans `catalog/access-decisions.json` (raison, relecteur, date) ;
+5. `catalog:build -- --update-lock`, puis `npm run verify` ;
+6. pull request relue par une seconde personne.
 
 **Contrôles de la génération** (`catalog:fetch`, `catalog:build` et `catalog:check`) :
 
@@ -375,11 +375,12 @@ Exemple :
   - `reason` et `reviewedBy` sont renseignés et ne sont pas des modèles (`<…>`, `TODO`, `TBD`, `?`, `x`, `xxx`…) ; une identité « Nom <courriel> » est acceptée ;
   - `reviewedOn` est une vraie date `AAAA-MM-JJ`, pas dans le futur (un jour de marge pour les fuseaux horaires).
 - **Schéma du serveur.** Le catalogue généré passe par la même validation qu'au démarrage du serveur (chemins, classes d'accès, identifiants, comptes par famille) : un catalogue que le serveur refuserait échoue dès la génération.
-- **Doublons.** Une même méthode et un même chemin déclarés deux fois dans un WADL sont fusionnés (paramètres réunis, corps accepté si l'une des déclarations l'accepte, première description gardée) et leur nombre est affiché. Les paramètres `matrix` et `header`, que les outils génériques ne savent pas envoyer, sont comptés et signalés.
+- **Doublons.** Une même méthode et un même chemin déclarés deux fois dans un WADL sont fusionnés (paramètres réunis, corps accepté si l'une des déclarations l'accepte, première description gardée) et leur nombre est affiché. Les paramètres `matrix`, `header` et `plain`, que les outils génériques ne savent pas envoyer, sont comptés et signalés.
 - **Xray absent.** Les décisions qui portent sur Xray (`/rest/raven/`) sont conservées sans être signalées comme obsolètes quand le plugin n'est pas installé.
 - **Différences.** `catalog/last-diff.md` et le résumé `lastChange` du verrou comparent le catalogue au **dernier catalogue verrouillé**, et non à la génération précédente : `catalog:build` puis `catalog:build -- --update-lock` montrent tous deux les opérations ajoutées ou supprimées par la mise à jour de Jira.
   - Le verrou ne contient que l'empreinte des opérations ; leur liste est gardée localement dans `catalog/lock-baseline.json` (non versionné), écrit par `--update-lock`.
-  - Sans cette copie (nouveau clone), un `catalog/catalog.json` encore identique au verrou sert de référence ; sinon la référence est déclarée inconnue (`baseline: "unknown"`, comptes `null`) plutôt que de donner un faux résultat.
+  - Si cette copie a été supprimée, un `catalog/catalog.json` encore identique au verrou sert de référence, de même que le catalogue qui vient d'être généré : sur un nouveau clone dont les WADL correspondent encore au verrou, la différence est donc vide.
+  - Sur un nouveau clone dont les WADL ont changé depuis le verrou, la référence est déclarée inconnue (`baseline: "unknown"`, comptes `null`) plutôt que de donner un faux résultat.
   - Un `--update-lock` qui ne change ni version, ni fichiers, ni opérations laisse le verrou intact.
 - **CI.** Avec `CI=true`, les listes d'opérations (différences, décisions obsolètes) sont remplacées par leur nombre.
 

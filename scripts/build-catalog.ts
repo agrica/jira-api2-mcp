@@ -1,14 +1,15 @@
 import { readFile, writeFile } from 'node:fs/promises';
-import type { AccessDecisions, CatalogFile } from '../src/catalog/types.ts';
+import type { AccessDecisions } from '../src/catalog/types.ts';
 import {
+  asCatalog,
   buildCatalog,
+  chooseBaseline,
   diffAgainstBaseline,
   formatBaselineDiff,
   formatReview,
   makeLock,
   operationsDigest,
   sameLockContent,
-  selectBaseline,
   verifyFiles,
   type LockBaseline,
 } from './lib/build.ts';
@@ -61,7 +62,8 @@ await runScript(async () => {
   }
   verifyFiles(meta, xml);
 
-  const previous = await optional<CatalogFile>(CATALOG_JSON);
+  // A local catalog.json of the wrong shape (e.g. `{}`) is treated as absent.
+  const previous = asCatalog(await optional<unknown>(CATALOG_JSON));
   const { catalog, staleDecisions, dormantDecisions, candidates, pending } = buildCatalog({
     xml,
     decisions,
@@ -86,10 +88,11 @@ await runScript(async () => {
   // The reference is the locked catalog, not the previous local build: `build` then
   // `build -- --update-lock` must both report what changed since the lock.
   const previousLock = await readLockIfAny();
-  const baseline = selectBaseline(previousLock, [
-    await optional<LockBaseline>(LOCK_BASELINE),
+  const baseline = chooseBaseline(previousLock, {
+    copy: await optional<unknown>(LOCK_BASELINE),
     previous,
-  ]);
+    built: catalog,
+  });
   const diff = diffAgainstBaseline(baseline, catalog.operations);
 
   await writeFile(CATALOG_JSON, `${JSON.stringify(catalog, null, 2)}\n`, 'utf8');
