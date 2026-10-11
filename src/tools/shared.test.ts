@@ -7,7 +7,9 @@ import {
   errorResult,
   issueKeySchema,
   jsonResult,
+  maxResultsSchema,
   projectKeySchema,
+  startAtSchema,
   truncate,
 } from './shared.ts';
 
@@ -78,5 +80,26 @@ describe('key schemas', () => {
   it('accepts project keys only', () => {
     expect(projectKeySchema.parse('demo')).toBe('DEMO');
     expect(projectKeySchema.safeParse('DEMO/../x').success).toBe(false);
+  });
+});
+
+describe('pagination schemas', () => {
+  it('bound maxResults to 1-100 by default, with configurable bounds', () => {
+    const schema = maxResultsSchema(25);
+    expect(schema.parse(undefined)).toBe(25);
+    expect(schema.safeParse(0).success).toBe(false);
+    expect(schema.safeParse(101).success).toBe(false);
+    expect(schema.safeParse(1.5).success).toBe(false);
+    expect(schema.parse(100)).toBe(100);
+    const agile = maxResultsSchema(50, { max: 50 });
+    expect(agile.safeParse(51).success).toBe(false);
+    expect(agile.description).toContain('1-50');
+    expect(maxResultsSchema(25, { min: 0 }).parse(0)).toBe(0);
+  });
+
+  it('startAt is a non-negative integer defaulting to 0', () => {
+    expect(startAtSchema.parse(undefined)).toBe(0);
+    expect(startAtSchema.safeParse(-1).success).toBe(false);
+    expect(startAtSchema.safeParse(0.5).success).toBe(false);
   });
 });

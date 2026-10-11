@@ -47,7 +47,7 @@ describe('issue read tools', () => {
       .mockResolvedValueOnce(jsonResponse({ total: 0, issues: [] }));
     const result = await h.call('jira_search_issues', {
       jql: 'project = DEMO',
-      fields: [],
+      fields: ['summary'],
       expand: ' renderedFields, ,changelog ,',
       startAt: 10,
       maxResults: 5,
@@ -58,6 +58,7 @@ describe('issue read tools', () => {
       jql: 'project = DEMO',
       startAt: 10,
       maxResults: 5,
+      fields: ['summary'],
       expand: ['renderedFields', 'changelog'],
     });
   });
@@ -124,5 +125,105 @@ describe('issue read tools', () => {
       expand: 'projects.issuetypes.fields',
     });
     expect(h.request(1).url.pathname).toBe('/rest/api/2/issue/DEMO-1/editmeta');
+  });
+});
+
+describe('issue read tools (validation, hints, errors)', () => {
+  let h: Harness;
+  afterEach(async () => {
+    await h.close();
+  });
+
+  it('reject an empty fields list with a hint about ["*all"]', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    const search = await h.call('jira_search_issues', { jql: 'project = DEMO', fields: [] });
+    const issue = await h.call('jira_get_issue', { issueKey: 'DEMO-1', fields: [] });
+    for (const result of [search, issue]) {
+      expect(result.isError).toBe(true);
+      expect(result.text).toContain('["*all"]');
+    }
+    expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('jira_search_issues accepts maxResults 0 (total only), not 101', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    expect((await h.call('jira_search_issues', { jql: 'x = 1', maxResults: 101 })).isError).toBe(
+      true,
+    );
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ total: 42, issues: [] }));
+    expect((await h.call('jira_search_issues', { jql: 'x = 1', maxResults: 0 })).isError).toBe(
+      false,
+    );
+    expect(h.request().body).toMatchObject({ maxResults: 0 });
+    const tools = await h.listTools();
+    const search = tools.find((t) => t.name === 'jira_search_issues');
+    expect(search?.description).toContain('8.x');
+    expect(search?.description).not.toContain('8.20');
+  });
+
+  it('jira_search_issues also accepts expand as a list, like jira_get_issue', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ total: 0, issues: [] }));
+    await h.call('jira_search_issues', { jql: 'x = 1', expand: ['changelog', ' names '] });
+    expect(h.request().body).toMatchObject({ expand: ['changelog', 'names'] });
+  });
+
+  it('jira_get_create_meta explains an empty projects list', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ expand: 'projects', projects: [] }));
+    const result = JSON.parse(
+      (await h.call('jira_get_create_meta', { projectKey: 'DEMO', issueType: 'task' })).text,
+    ) as { projects: unknown[]; hint: string };
+    expect(result.projects).toEqual([]);
+    expect(result.hint).toMatch(/unknown project/i);
+    expect(result.hint).toContain('permission');
+    expect(result.hint).toContain('jira_get_project');
+  });
+
+  it('jira_get_create_meta explains a project without the requested issue type', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    h.fetchMock.mockResolvedValueOnce(
+      jsonResponse({ projects: [{ key: 'DEMO', issuetypes: [] }] }),
+    );
+    const result = JSON.parse(
+      (await h.call('jira_get_create_meta', { projectKey: 'DEMO', issueType: 'task' })).text,
+    ) as { projects: unknown[]; hint: string };
+    expect(result.projects).toEqual([{ key: 'DEMO', issuetypes: [] }]);
+    expect(result.hint).toContain('"task"');
+  });
+
+  it('jira_get_create_meta returns a non-empty answer unchanged and documents its size', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    const meta = { projects: [{ key: 'DEMO', issuetypes: [{ name: 'Task', fields: {} }] }] };
+    h.fetchMock.mockResolvedValueOnce(jsonResponse(meta));
+    expect(JSON.parse((await h.call('jira_get_create_meta', { projectKey: 'DEMO' })).text)).toEqual(
+      meta,
+    );
+    const tool = (await h.listTools()).find((t) => t.name === 'jira_get_create_meta');
+    expect(tool?.description).toMatch(/without issueType/i);
+    expect(tool?.description).toContain('empty "projects"');
+  });
+
+  it('surface Jira errors (invalid JQL, missing issue) as tool errors', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    h.fetchMock
+      .mockResolvedValueOnce(
+        jsonResponse({ errorMessages: ["Field 'foo' does not exist"], errors: {} }, 400),
+      )
+      .mockResolvedValueOnce(
+        jsonResponse({ errorMessages: ['Issue Does Not Exist'], errors: {} }, 404),
+      );
+    const search = await h.call('jira_search_issues', { jql: 'foo = 1' });
+    expect(search).toEqual({ isError: true, text: expect.stringContaining("Field 'foo'") });
+    const issue = await h.call('jira_get_issue', { issueKey: 'DEMO-404' });
+    expect(issue).toEqual({ isError: true, text: expect.stringContaining('Issue Does Not Exist') });
+    expect(h.fetchMock).toHaveBeenCalledTimes(2);
+  });
+
+  it('every tool is annotated read-only', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    const tools = await h.listTools();
+    expect(tools).toHaveLength(6);
+    expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
   });
 });

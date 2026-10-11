@@ -1,5 +1,5 @@
 /* oxlint-disable eslint/no-await-in-loop -- some cases call tools sequentially on purpose (shared mock) */
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
@@ -9,7 +9,7 @@ import {
   noContent,
   type Harness,
 } from '../test-support/harness.ts';
-import { registerIssueWriteTools } from './issues-write.ts';
+import { normaliseWorklogStarted, registerIssueWriteTools } from './issues-write.ts';
 
 const enabled = { allowWrites: true };
 
@@ -298,5 +298,214 @@ describe('issue write tools', () => {
     await h.call('jira_delete_issue', { issueKey: 'DEMO-1', deleteSubtasks: true });
     expect(h.request()).toMatchObject({ method: 'DELETE' });
     expect(h.request().url.searchParams.get('deleteSubtasks')).toBe('true');
+  });
+});
+
+describe('worklog started', () => {
+  it('keeps the Jira format and converts ISO 8601 forms to it', () => {
+    expect(normaliseWorklogStarted('2025-01-15T09:30:00.000+0100')).toBe(
+      '2025-01-15T09:30:00.000+0100',
+    );
+    expect(normaliseWorklogStarted('2025-01-15T09:30:00Z')).toBe('2025-01-15T09:30:00.000+0000');
+    expect(normaliseWorklogStarted('2025-01-15T09:30:00.5+02:00')).toBe(
+      '2025-01-15T09:30:00.500+0200',
+    );
+    expect(normaliseWorklogStarted('2025-01-15T09:30:00.123456-05:30')).toBe(
+      '2025-01-15T09:30:00.123-0530',
+    );
+    expect(normaliseWorklogStarted(' 2024-02-29T23:59:59.999z ')).toBe(
+      '2024-02-29T23:59:59.999+0000',
+    );
+  });
+
+  it('rejects anything else', () => {
+    for (const bad of [
+      '',
+      '2025-01-15',
+      '2025-01-15 09:30:00',
+      '2025-01-15T09:30',
+      '2025-01-15T09:30:00',
+      '2025-01-15T09:30:00.000',
+      '2025-01-15T09:30:00+1',
+      '2025-02-30T09:30:00Z',
+      '2025-13-01T09:30:00Z',
+      '2025-01-15T24:00:00Z',
+      '2025-01-15T09:60:00Z',
+      '2025-01-15T09:30:00+1500',
+      '2025-01-15T09:30:00+0160',
+      '15/01/2025 09:30',
+      'now',
+    ]) {
+      expect({ [bad]: normaliseWorklogStarted(bad) }).toEqual({ [bad]: undefined });
+    }
+  });
+});
+
+describe('issue write tools (validation, descriptions, annotations)', () => {
+  let h: Harness;
+  afterEach(async () => {
+    await h.close();
+  });
+
+  it('expose no tool at all while writes are disabled', async () => {
+    h = await createToolHarness(registerIssueWriteTools);
+    expect(await h.listToolNames()).toEqual([]);
+  });
+
+  it('annotate every write tool', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    const tools = new Map((await h.listTools()).map((t) => [t.name, t.annotations]));
+    expect(tools.size).toBe(9);
+    const write = { readOnlyHint: false, destructiveHint: false, idempotentHint: false };
+    for (const name of [
+      'jira_create_issue',
+      'jira_update_issue',
+      'jira_transition_issue',
+      'jira_add_comment',
+      'jira_add_worklog',
+      'jira_link_issues',
+      'jira_add_attachment',
+    ]) {
+      expect({ name, ...tools.get(name) }).toMatchObject({ name, ...write });
+    }
+    expect(tools.get('jira_assign_issue')).toMatchObject({ ...write, idempotentHint: true });
+    expect(tools.get('jira_delete_issue')).toMatchObject({
+      readOnlyHint: false,
+      destructiveHint: true,
+    });
+  });
+
+  it('jira_add_worklog normalises "started" and rejects other formats with an example', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    const bad = await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      started: '2025-01-15 09:30',
+    });
+    expect(bad.isError).toBe(true);
+    expect(bad.text).toMatch(/\d{4}-\d{2}-\d{2}T\d{2}:\d{2}:\d{2}\.\d{3}[+-]\d{4}/);
+    expect(h.fetchMock).not.toHaveBeenCalled();
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ id: '20' }, 201));
+    await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      started: '2025-01-15T09:30:00+01:00',
+    });
+    expect(h.request().body).toEqual({ timeSpent: '1h', started: '2025-01-15T09:30:00.000+0100' });
+    const tool = (await h.listTools()).find((t) => t.name === 'jira_add_worklog');
+    expect(tool?.description).not.toMatch(/\d{4}-\d{2}-\d{2}T/);
+  });
+
+  it('jira_add_worklog forwards the remaining-estimate controls', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockImplementation(async () => jsonResponse({ id: '20' }, 201));
+    await h.call('jira_add_worklog', { issueKey: 'DEMO-1', timeSpent: '1h' });
+    expect(h.request(0).url.search).toBe('');
+    await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      adjustEstimate: 'new',
+      newEstimate: '2d',
+    });
+    expect(Object.fromEntries(h.request(1).url.searchParams)).toEqual({
+      adjustEstimate: 'new',
+      newEstimate: '2d',
+    });
+    await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      adjustEstimate: 'manual',
+      reduceBy: '30m',
+    });
+    expect(Object.fromEntries(h.request(2).url.searchParams)).toEqual({
+      adjustEstimate: 'manual',
+      reduceBy: '30m',
+    });
+    await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      adjustEstimate: 'leave',
+    });
+    expect(h.request(3).url.searchParams.get('adjustEstimate')).toBe('leave');
+    const missingNew = await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      adjustEstimate: 'new',
+    });
+    expect(missingNew.text).toContain('newEstimate');
+    const missingReduce = await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      adjustEstimate: 'manual',
+    });
+    expect(missingReduce.text).toContain('reduceBy');
+    const stray = await h.call('jira_add_worklog', {
+      issueKey: 'DEMO-1',
+      timeSpent: '1h',
+      newEstimate: '2d',
+    });
+    expect(stray.isError).toBe(true);
+    expect(h.fetchMock).toHaveBeenCalledTimes(4);
+  });
+
+  it('jira_update_issue sends notifyUsers only when false and documents the permission', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockImplementation(async () => noContent());
+    await h.call('jira_update_issue', { issueKey: 'DEMO-1', fields: { summary: 'x' } });
+    await h.call('jira_update_issue', {
+      issueKey: 'DEMO-1',
+      fields: { summary: 'x' },
+      notifyUsers: true,
+    });
+    expect(h.request(0).url.search).toBe('');
+    expect(h.request(1).url.search).toBe('');
+    const tool = (await h.listTools()).find((t) => t.name === 'jira_update_issue');
+    const notify = tool?.inputSchema?.properties?.notifyUsers as { description?: string };
+    expect(notify.description).toMatch(/administrator/i);
+  });
+
+  it('jira_assign_issue sends "-1" for automatic assignment', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockResolvedValueOnce(noContent());
+    await h.call('jira_assign_issue', { issueKey: 'DEMO-1', username: '-1' });
+    expect(h.request().body).toEqual({ name: '-1' });
+  });
+
+  it('describe the link direction and how to create a sub-task', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    const tools = new Map((await h.listTools()).map((t) => [t.name, t.description ?? '']));
+    const link = tools.get('jira_link_issues') ?? '';
+    expect(link).toContain('jira_list_issue_link_types');
+    expect(link).toContain('outwardIssue=DEMO-1, inwardIssue=DEMO-2');
+    expect(tools.get('jira_create_issue')).toContain('parent');
+  });
+
+  it('jira_add_attachment explains a directory, an empty file and a missing file', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-'));
+    const sub = join(dir, 'folder');
+    await mkdir(sub);
+    const empty = join(dir, 'empty.txt');
+    await writeFile(empty, '');
+    const asDir = await h.call('jira_add_attachment', { issueKey: 'DEMO-1', filePath: sub });
+    expect(asDir).toEqual({ isError: true, text: expect.stringContaining('not a regular file') });
+    const asEmpty = await h.call('jira_add_attachment', { issueKey: 'DEMO-1', filePath: empty });
+    expect(asEmpty).toEqual({ isError: true, text: expect.stringContaining('is empty') });
+    const missing = await h.call('jira_add_attachment', {
+      issueKey: 'DEMO-1',
+      filePath: join(dir, 'absent.txt'),
+    });
+    expect(missing).toEqual({ isError: true, text: expect.stringContaining('ENOENT') });
+    expect(h.fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('jira_delete_issue surfaces Jira refusals', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    h.fetchMock.mockResolvedValueOnce(
+      jsonResponse({ errorMessages: ['The issue has sub-tasks'], errors: {} }, 400),
+    );
+    const result = await h.call('jira_delete_issue', { issueKey: 'DEMO-1' });
+    expect(result).toEqual({ isError: true, text: expect.stringContaining('sub-tasks') });
+    expect(h.fetchMock).toHaveBeenCalledOnce();
   });
 });

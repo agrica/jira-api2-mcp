@@ -50,6 +50,20 @@ export function describeCoverage(catalog: Catalog): string {
   return notes.length > 0 ? `${covered} (${notes.join('; ')})` : covered;
 }
 
+/**
+ * A read operation may return a file (attachment content, avatar…). The client decodes non-JSON bodies
+ * as text: binary bytes become NUL or U+FFFD characters, useless to the model. Return a note instead.
+ */
+function withoutBinary(data: unknown): unknown {
+  if (typeof data !== 'string' || !(data.includes('\u0000') || data.includes('\uFFFD')))
+    return data;
+  return {
+    binary: true,
+    characters: data.length,
+    note: 'Jira returned a binary (non-text) body; it is not passed to the model. Download it outside this MCP server.',
+  };
+}
+
 const callInput = z.object({
   operationId: z.string().min(1).describe('e.g. "GET /rest/api/2/issue/{issueIdOrKey}"'),
   pathParams: z.record(z.string(), z.union([z.string(), z.number()])).optional(),
@@ -66,9 +80,13 @@ const callInput = z.object({
 export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog: Catalog): void {
   const { client } = deps;
   const source = catalog.meta
-    ? `Jira ${catalog.meta.jiraVersion} WADL fetched ${catalog.meta.fetchedAt}`
-    : 'instance WADL';
+    ? `WADLs of the Jira ${catalog.meta.jiraVersion} instance, fetched ${catalog.meta.fetchedAt},`
+    : 'instance WADLs';
   const offered = offeredFamilies(catalog);
+  const scope =
+    catalog.size > 0
+      ? `Search the ${catalog.size} operations described by the ${source} for ${describeCoverage(catalog)}.`
+      : `The catalog is empty: no operation to search for ${describeCoverage(catalog)} (regenerate it with npm run catalog:build).`;
 
   defineTool(
     server,
@@ -76,7 +94,7 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
     'jira_list_operations',
     {
       title: 'List Jira REST operations',
-      description: `Search the ${catalog.size} operations described by the ${source} for ${describeCoverage(catalog)}. Other REST families are not covered. All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); "not individually reviewed" in its reason means the class comes from the HTTP method only.`,
+      description: `${scope} Other REST families are not covered. All terms must match the operation id ("METHOD /path") or its summary. Each operation has an access class (read, write, destructive); jira_describe_operation gives its origin ("not individually reviewed" means the class comes from the HTTP method only).`,
       inputSchema: z.object({
         query: z
           .string()
@@ -143,7 +161,9 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
           }.`,
         );
       }
-      return (await client.request(catalog.buildRequest(op, { pathParams, query, body }))).data;
+      return withoutBinary(
+        (await client.request(catalog.buildRequest(op, { pathParams, query, body }))).data,
+      );
     },
   );
 

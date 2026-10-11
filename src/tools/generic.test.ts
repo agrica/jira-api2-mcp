@@ -240,3 +240,53 @@ describe('generic catalog tools', () => {
     expect(h.fetchMock).toHaveBeenCalledOnce();
   });
 });
+
+describe('generic catalog tools (descriptions, binary bodies)', () => {
+  let h: Harness;
+  afterEach(async () => {
+    await h.close();
+  });
+
+  const describeList = async (cat: Catalog) => {
+    h = await createToolHarness((server, deps) => registerGenericTools(server, deps, cat));
+    return (await h.listTools()).find((t) => t.name === 'jira_list_operations')?.description ?? '';
+  };
+
+  it('jira_list_operations names the source WADLs and points to jira_describe_operation', async () => {
+    const meta = {
+      jiraVersion: '8.20.0',
+      jiraBuildNumber: 820000,
+      fetchedAt: '2026-01-02T03:04:05.000Z',
+      generatedAt: '2026-01-02T03:05:00.000Z',
+      counts: { api: 4, agile: 0, xray: 0 },
+    };
+    const description = await describeList(
+      new Catalog(catalog.search({ limit: 1000 }).operations, meta),
+    );
+    expect(description).toContain('Search the 4 operations');
+    expect(description).toContain('WADLs of the Jira 8.20.0 instance, fetched 2026-01-02');
+    expect(description).toContain('jira_describe_operation');
+  });
+
+  it('jira_list_operations says so when the catalog is empty', async () => {
+    const description = await describeList(new Catalog([]));
+    expect(description).toContain('The catalog is empty');
+    expect(description).not.toContain('Search the 0 operations');
+  });
+
+  it('jira_call_read_operation does not hand a binary body to the model', async () => {
+    h = await createToolHarness((server, deps) => registerGenericTools(server, deps, catalog));
+    h.fetchMock.mockResolvedValueOnce(
+      new Response(new Uint8Array([0x89, 0x50, 0x4e, 0x47, 0x00, 0xff, 0xfe, 0x01]), {
+        headers: { 'content-type': 'image/png' },
+      }),
+    );
+    const result = await h.call('jira_call_read_operation', {
+      operationId: 'GET /rest/api/2/issue/{issueIdOrKey}/comment',
+      pathParams: { issueIdOrKey: 'DEMO-1' },
+    });
+    expect(result.isError).toBe(false);
+    expect(result.text).toContain('binary');
+    expect(result.text).not.toContain('PNG');
+  });
+});

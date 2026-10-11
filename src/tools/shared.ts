@@ -62,9 +62,40 @@ export const startAtSchema = z
   .default(0)
   .describe('Index of the first result (pagination)');
 
-export function maxResultsSchema(defaultValue: number) {
-  return z.number().int().min(1).max(100).default(defaultValue).describe('Page size (1-100)');
+export function maxResultsSchema(
+  defaultValue: number,
+  { min = 1, max = 100, note = '' }: { min?: number; max?: number; note?: string } = {},
+) {
+  return z
+    .number()
+    .int()
+    .min(min)
+    .max(max)
+    .default(defaultValue)
+    .describe(`Page size (${min}-${max})${note}`);
 }
+
+/**
+ * Agile 1.0 list endpoints silently cap a page at 50 results (a larger maxResults is clamped),
+ * and some of them return `isLast` instead of `total`.
+ */
+export function agileMaxResultsSchema(defaultValue: number) {
+  return maxResultsSchema(defaultValue, {
+    max: 50,
+    note: '. Jira Agile caps pages at 50. Pages may give isLast instead of total: next startAt = startAt + number of items returned, until isLast is true.',
+  });
+}
+
+/** Issue fields to return: never empty (Jira would read an empty list as "every navigable field"). */
+export const issueFieldsSchema = z
+  .array(z.string().min(1))
+  .min(
+    1,
+    'Give at least one field id, or ["*all"] for every field; omit "fields" for the default list',
+  )
+  .describe(
+    'Fields to return, e.g. ["summary","status","customfield_10001"]. ["*all"] returns every field (large). Omit for the default list.',
+  );
 
 /**
  * MCP annotations are HINTS for clients (e.g. to ask the user for confirmation).

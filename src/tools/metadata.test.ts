@@ -79,3 +79,74 @@ describe('metadata tools', () => {
     );
   });
 });
+
+describe('metadata tools (filters, annotations, errors)', () => {
+  let h: Harness;
+  afterEach(async () => {
+    await h.close();
+  });
+
+  it('jira_list_projects filters by key or name, ignoring case and accents', async () => {
+    h = await createToolHarness(registerMetadataTools);
+    h.fetchMock.mockImplementation(async () =>
+      jsonResponse([
+        { id: '10000', key: 'DEMO', name: 'Démo', projectTypeKey: 'software' },
+        { id: '10001', key: 'OPS', name: 'Exploitation', projectTypeKey: 'business' },
+      ]),
+    );
+    const byName = JSON.parse((await h.call('jira_list_projects', { query: 'demo' })).text) as {
+      key: string;
+    }[];
+    expect(byName.map((p) => p.key)).toEqual(['DEMO']);
+    const byKey = JSON.parse((await h.call('jira_list_projects', { query: 'ops' })).text) as {
+      key: string;
+    }[];
+    expect(byKey.map((p) => p.key)).toEqual(['OPS']);
+    expect(JSON.parse((await h.call('jira_list_projects')).text)).toHaveLength(2);
+  });
+
+  it('jira_list_fields returns the JQL clause names', async () => {
+    h = await createToolHarness(registerMetadataTools);
+    h.fetchMock.mockResolvedValueOnce(
+      jsonResponse([
+        {
+          id: 'customfield_10020',
+          name: 'Sprint',
+          custom: true,
+          clauseNames: ['cf[10020]', 'Sprint'],
+          schema: { type: 'array' },
+        },
+      ]),
+    );
+    const [field] = JSON.parse((await h.call('jira_list_fields')).text) as {
+      clauseNames: string[];
+    }[];
+    expect(field?.clauseNames).toEqual(['cf[10020]', 'Sprint']);
+  });
+
+  it('jira_list_issue_link_types says it returns the inward and outward texts', async () => {
+    h = await createToolHarness(registerMetadataTools);
+    const tool = (await h.listTools()).find((t) => t.name === 'jira_list_issue_link_types');
+    expect(tool?.description).toContain('inward');
+    expect(tool?.description).toContain('outward');
+  });
+
+  it('every tool is annotated read-only', async () => {
+    h = await createToolHarness(registerMetadataTools);
+    const tools = await h.listTools();
+    expect(tools).toHaveLength(8);
+    expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
+  });
+
+  it('surfaces a Jira permission error', async () => {
+    h = await createToolHarness(registerMetadataTools);
+    h.fetchMock.mockResolvedValueOnce(
+      jsonResponse(
+        { errorMessages: ['No project could be found with key DEMO.'], errors: {} },
+        404,
+      ),
+    );
+    const result = await h.call('jira_get_project', { projectKey: 'DEMO' });
+    expect(result).toEqual({ isError: true, text: expect.stringContaining('No project could be') });
+  });
+});

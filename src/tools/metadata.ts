@@ -21,6 +21,7 @@ interface JiraField {
   id: string;
   name: string;
   custom: boolean;
+  clauseNames?: string[];
   schema?: { type?: string; custom?: string };
 }
 
@@ -76,19 +77,19 @@ export function registerMetadataTools(server: McpServer, deps: ToolDeps): void {
     'jira_list_projects',
     {
       title: 'List projects',
-      description: 'Projects visible to the user (id, key, name, type).',
-      inputSchema: noInput,
+      description:
+        'Projects visible to the user (id, key, name, type). "query" keeps the projects whose key or name contains it, ignoring case and accents.',
+      inputSchema: z.object({
+        query: z.string().optional().describe('Fragment of the project key or name'),
+      }),
       annotations: READ,
     },
-    async () =>
-      ((await get('/rest/api/2/project')) as JiraProject[]).map(
-        ({ id, key, name, projectTypeKey }) => ({
-          id,
-          key,
-          name,
-          projectTypeKey,
-        }),
-      ),
+    async ({ query }) => {
+      const needle = normalizeForSearch(query ?? '');
+      return ((await get('/rest/api/2/project')) as JiraProject[])
+        .filter((p) => normalizeForSearch(`${p.key} ${p.name}`).includes(needle))
+        .map(({ id, key, name, projectTypeKey }) => ({ id, key, name, projectTypeKey }));
+    },
   );
 
   defineTool(
@@ -124,7 +125,7 @@ export function registerMetadataTools(server: McpServer, deps: ToolDeps): void {
     {
       title: 'List fields',
       description:
-        'System and custom fields with their ids (customfield_NNNNN). "query" matches name or id, ignoring case and accents (e.g. "epopee", "sprint", "10001").',
+        'System and custom fields with their ids (customfield_NNNNN) and JQL clause names (e.g. cf[10001]). "query" matches name or id, ignoring case and accents (e.g. "epopee", "sprint", "10001").',
       inputSchema: z.object({
         query: z.string().optional(),
         customOnly: z.boolean().default(false),
@@ -142,6 +143,7 @@ export function registerMetadataTools(server: McpServer, deps: ToolDeps): void {
           id: f.id,
           name: f.name,
           custom: f.custom,
+          clauseNames: f.clauseNames,
           type: f.schema?.type,
           customType: f.schema?.custom,
         }));
@@ -154,7 +156,8 @@ export function registerMetadataTools(server: McpServer, deps: ToolDeps): void {
     'jira_list_issue_link_types',
     {
       title: 'Issue link types',
-      description: 'Link type names usable with jira_link_issues.',
+      description:
+        'Issue link types usable with jira_link_issues: id, name, and the outward text (applies to outwardIssue, e.g. "blocks") and inward text (applies to inwardIssue, e.g. "is blocked by").',
       inputSchema: noInput,
       annotations: READ,
     },

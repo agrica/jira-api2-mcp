@@ -1,4 +1,5 @@
 import { openAsBlob } from 'node:fs';
+import { stat } from 'node:fs/promises';
 import { basename } from 'node:path';
 import type { McpServer } from '@modelcontextprotocol/server';
 import { z } from 'zod';
@@ -16,6 +17,38 @@ import {
 
 /** Jira duration: one or more `<number><unit>` groups, decimals allowed (e.g. "1.5h", "2h 30m", "1w 2d"). */
 const DURATION = /^\s*(?:\d+(?:\.\d+)?[wdhm]\s*)+$/;
+const durationSchema = z
+  .string()
+  .regex(DURATION, 'Expected a Jira duration such as "1h 30m", "1.5h" or "2d"');
+
+/** `yyyy-MM-ddTHH:mm:ss[.fraction](Z|±HH:MM|±HHMM)` */
+const STARTED =
+  /^(\d{4})-(\d{2})-(\d{2})T(\d{2}):(\d{2}):(\d{2})(?:\.(\d{1,9}))?(Z|[+-]\d{2}:?\d{2})$/i;
+const STARTED_MESSAGE =
+  'Expected the Jira date-time format yyyy-MM-ddTHH:mm:ss.SSS±HHMM, e.g. 2025-01-15T09:30:00.000+0100 (ISO 8601 with "Z" or "±HH:MM", with or without milliseconds, is converted)';
+
+/**
+ * Jira 8 parses worklog `started` with `yyyy-MM-dd'T'HH:mm:ss.SSSZ` only (milliseconds required, offset
+ * without colon). Returns that form for it and for the usual ISO 8601 variants, `undefined` otherwise.
+ */
+export function normaliseWorklogStarted(value: string): string | undefined {
+  const match = STARTED.exec(value.trim());
+  if (!match) return undefined;
+  const [, year, month, day, hour, minute, second, fraction = '', zone = ''] = match;
+  const daysInMonth = new Date(Date.UTC(Number(year), Number(month), 0)).getUTCDate();
+  if (Number(month) < 1 || Number(month) > 12 || Number(day) < 1 || Number(day) > daysInMonth)
+    return undefined;
+  if (Number(hour) > 23 || Number(minute) > 59 || Number(second) > 59) return undefined;
+  let offset = '+0000';
+  if (zone.toUpperCase() !== 'Z') {
+    const digits = zone.slice(1).replace(':', '');
+    if (Number(digits.slice(0, 2)) > 14 || Number(digits.slice(2)) > 59) return undefined;
+    offset = `${zone[0]}${digits}`;
+  }
+  const millis = fraction.padEnd(3, '0').slice(0, 3);
+  return `${year}-${month}-${day}T${hour}:${minute}:${second}.${millis}${offset}`;
+}
+
 /** A numeric issue reference is an issue id, anything else an issue key. */
 const issueRef = (keyOrId: string) => (/^\d+$/.test(keyOrId) ? { id: keyOrId } : { key: keyOrId });
 const fieldMapSchema = z
@@ -43,7 +76,7 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
     {
       title: 'Create an issue',
       description:
-        'Create an issue (API v2: description in wiki markup). Use jira_get_create_meta first for required fields and allowed values. Select/radio values are written {"value":"…"}. Not retried automatically.',
+        'Create an issue (API v2: description in wiki markup). Use jira_get_create_meta first for required fields and allowed values. Select/radio values are written {"value":"…"}. A sub-task needs a sub-task issue type and fields.parent = {"key":"DEMO-1"}; epic link and epic name are custom fields (find their ids with jira_list_fields, query "epic"). Not retried automatically.',
       inputSchema: z.object({
         projectKey: projectKeySchema,
         issueType: z.string().min(1).describe('Issue type name, e.g. "Task", "Bug", "Story"'),
@@ -78,13 +111,23 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
         issueKey: issueKeySchema,
         fields: fieldMapSchema.optional(),
         update: z.record(z.string(), z.unknown()).optional(),
-        notifyUsers: z.boolean().default(true),
+        notifyUsers: z
+          .boolean()
+          .optional()
+          .describe(
+            'false suppresses the e-mail notification. Jira accepts it only from a Jira or project administrator: anyone else gets HTTP 403 and the edit is not applied. Default: notify.',
+          ),
       }),
       annotations: WRITE,
     },
     async ({ issueKey, fields, update, notifyUsers }) => {
       if (!fields && !update) throw new Error('Provide "fields" and/or "update"');
-      return send('PUT', `/rest/api/2/issue/${enc(issueKey)}`, { fields, update }, { notifyUsers });
+      return send(
+        'PUT',
+        `/rest/api/2/issue/${enc(issueKey)}`,
+        { fields, update },
+        notifyUsers === false ? { notifyUsers } : undefined,
+      );
     },
   );
 
@@ -159,19 +202,45 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
     {
       title: 'Log work',
       description:
-        'Log time on an issue. "started" uses the Jira format 2026-10-11T09:00:00.000+0200. Not retried automatically.',
+        'Log time on an issue. "started" (default: now) uses the Jira format yyyy-MM-ddTHH:mm:ss.SSS±HHMM; ISO 8601 values ending in "Z" or "±HH:MM" are converted. By default Jira reduces the remaining estimate by timeSpent (adjustEstimate "auto"). Not retried automatically.',
       inputSchema: z.object({
         issueKey: issueKeySchema,
-        timeSpent: z
+        timeSpent: durationSchema,
+        started: z
           .string()
-          .regex(DURATION, 'Expected a Jira duration such as "1h 30m", "1.5h" or "2d"'),
-        started: z.string().optional(),
+          .refine((value) => normaliseWorklogStarted(value) !== undefined, STARTED_MESSAGE)
+          .optional()
+          .describe(
+            'When the work started, yyyy-MM-ddTHH:mm:ss.SSS±HHMM (with the time zone offset)',
+          ),
         comment: z.string().optional(),
+        adjustEstimate: z
+          .enum(['auto', 'new', 'manual', 'leave'])
+          .optional()
+          .describe(
+            'Remaining estimate: auto (Jira default, reduced by timeSpent), new (set to newEstimate), manual (reduced by reduceBy), leave (unchanged)',
+          ),
+        newEstimate: durationSchema.optional().describe('With adjustEstimate "new" only'),
+        reduceBy: durationSchema.optional().describe('With adjustEstimate "manual" only'),
       }),
       annotations: WRITE,
     },
-    async ({ issueKey, timeSpent, started, comment }) =>
-      send('POST', `/rest/api/2/issue/${enc(issueKey)}/worklog`, { timeSpent, started, comment }),
+    async ({ issueKey, timeSpent, started, comment, adjustEstimate, newEstimate, reduceBy }) => {
+      if ((adjustEstimate === 'new') !== (newEstimate !== undefined))
+        throw new Error('"newEstimate" is required with adjustEstimate "new", and only then');
+      if ((adjustEstimate === 'manual') !== (reduceBy !== undefined))
+        throw new Error('"reduceBy" is required with adjustEstimate "manual", and only then');
+      return send(
+        'POST',
+        `/rest/api/2/issue/${enc(issueKey)}/worklog`,
+        {
+          timeSpent,
+          started: started === undefined ? undefined : normaliseWorklogStarted(started),
+          comment,
+        },
+        { adjustEstimate, newEstimate, reduceBy },
+      );
+    },
   );
 
   defineTool(
@@ -181,11 +250,15 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
     {
       title: 'Link two issues',
       description:
-        'Create a link. linkType is the link type name, e.g. "Relates", "Blocks", "Duplicate" (see jira_list_issue_link_types).',
+        'Create a link between two issues. linkType is the link type name, e.g. "Relates", "Blocks", "Duplicate"; jira_list_issue_link_types gives each type with its outward and inward texts. Direction: outwardIssue is the issue the outward text applies to, inwardIssue the one on the inward side. Example with "Blocks" (outward "blocks", inward "is blocked by"): to record "DEMO-1 blocks DEMO-2", send outwardIssue=DEMO-1, inwardIssue=DEMO-2. Keys or numeric ids.',
       inputSchema: z.object({
         linkType: z.string().min(1),
-        inwardIssue: issueKeySchema,
-        outwardIssue: issueKeySchema,
+        inwardIssue: issueKeySchema.describe(
+          'Issue on the inward side (for "Blocks": the one that is blocked)',
+        ),
+        outwardIssue: issueKeySchema.describe(
+          'Issue the outward text applies to (for "Blocks": the one that blocks)',
+        ),
         comment: z.string().optional(),
       }),
       annotations: WRITE,
@@ -214,6 +287,9 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
       annotations: WRITE,
     },
     async ({ issueKey, filePath }) => {
+      const info = await stat(filePath);
+      if (!info.isFile()) throw new Error(`${filePath} is not a regular file`);
+      if (info.size === 0) throw new Error(`${filePath} is empty: Jira refuses empty attachments`);
       const form = new FormData();
       form.append('file', await openAsBlob(filePath), basename(filePath));
       return send('POST', `/rest/api/2/issue/${enc(issueKey)}/attachments`, form);

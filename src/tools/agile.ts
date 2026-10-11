@@ -3,10 +3,12 @@ import { z } from 'zod';
 import {
   DEFAULT_ISSUE_FIELDS,
   READ,
-  WRITE,
+  WRITE_IDEMPOTENT,
+  agileMaxResultsSchema,
   defineTool,
+  issueFieldsSchema,
   issueKeySchema,
-  maxResultsSchema,
+  join,
   readGet,
   startAtSchema,
   type ToolDeps,
@@ -24,13 +26,14 @@ export function registerAgileTools(server: McpServer, deps: ToolDeps): void {
     'jira_list_boards',
     {
       title: 'List agile boards',
-      description: 'Scrum/Kanban boards, optionally filtered by project or name.',
+      description:
+        'Scrum/Kanban boards, optionally filtered by project or name. Pages hold at most 50 boards.',
       inputSchema: z.object({
         projectKeyOrId: z.string().optional(),
         name: z.string().optional(),
         type: z.enum(['scrum', 'kanban']).optional(),
         startAt: startAtSchema,
-        maxResults: maxResultsSchema(50),
+        maxResults: agileMaxResultsSchema(50),
       }),
       annotations: READ,
     },
@@ -44,12 +47,13 @@ export function registerAgileTools(server: McpServer, deps: ToolDeps): void {
     'jira_list_sprints',
     {
       title: 'List sprints of a board',
-      description: 'Sprints of a scrum board, optionally filtered by state.',
+      description:
+        'Sprints of a scrum board, optionally filtered by state (a Kanban board has no sprints: Jira answers 400). Pages hold at most 50 sprints.',
       inputSchema: z.object({
         boardId: idSchema,
         state: z.array(z.enum(['future', 'active', 'closed'])).optional(),
         startAt: startAtSchema,
-        maxResults: maxResultsSchema(50),
+        maxResults: agileMaxResultsSchema(50),
       }),
       annotations: READ,
     },
@@ -67,20 +71,20 @@ export function registerAgileTools(server: McpServer, deps: ToolDeps): void {
     'jira_get_sprint_issues',
     {
       title: 'Issues of a sprint',
-      description: 'Issues in a sprint, optionally filtered by JQL.',
+      description: 'Issues in a sprint, optionally filtered by JQL. Pages hold at most 50 issues.',
       inputSchema: z.object({
         sprintId: idSchema,
         jql: z.string().optional(),
-        fields: z.array(z.string().min(1)).default([...DEFAULT_ISSUE_FIELDS]),
+        fields: issueFieldsSchema.default([...DEFAULT_ISSUE_FIELDS]),
         startAt: startAtSchema,
-        maxResults: maxResultsSchema(50),
+        maxResults: agileMaxResultsSchema(50),
       }),
       annotations: READ,
     },
     async ({ sprintId, jql, fields, startAt, maxResults }) =>
       get(`/rest/agile/1.0/sprint/${sprintId}/issue`, {
         jql,
-        fields: fields.join(','),
+        fields: join(fields),
         startAt,
         maxResults,
       }),
@@ -94,12 +98,13 @@ export function registerAgileTools(server: McpServer, deps: ToolDeps): void {
     'jira_move_issues_to_sprint',
     {
       title: 'Move issues to a sprint',
-      description: 'Move up to 50 issues into a sprint.',
+      description:
+        'Move up to 50 issues (keys or ids) into a sprint; they leave their previous sprint. Moving them again is harmless.',
       inputSchema: z.object({
         sprintId: idSchema,
         issueKeys: z.array(issueKeySchema).min(1).max(50),
       }),
-      annotations: WRITE,
+      annotations: WRITE_IDEMPOTENT,
     },
     async ({ sprintId, issueKeys }) =>
       (
