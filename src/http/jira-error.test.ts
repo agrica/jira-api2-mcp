@@ -4,6 +4,7 @@ import {
   RequestCancelledError,
   ResponseTooLargeError,
   WritesDisabledError,
+  WRITE_OUTCOME_UNKNOWN,
   extractErrorDetails,
 } from './jira-error.ts';
 
@@ -41,6 +42,34 @@ describe('extractErrorDetails', () => {
   });
 });
 
+describe('extractErrorDetails — rendering (audit)', () => {
+  it('serialises non-string values instead of [object Object]', () => {
+    const body = JSON.stringify({
+      errorMessages: [{ code: 'E1', text: 'nested' }],
+      errors: { sprint: { reason: 'closed' } },
+    });
+    expect(extractErrorDetails(body, 'application/json')).toEqual([
+      '{"code":"E1","text":"nested"}',
+      'sprint: {"reason":"closed"}',
+    ]);
+  });
+
+  it('decodes HTML entities in the title', () => {
+    expect(
+      extractErrorDetails(
+        '<title>Log in - Jira &amp; Co &#39;x&#39; &lt;b&gt;&#x21;&#63;</title>',
+        'text/html',
+      ),
+    ).toEqual(["Log in - Jira & Co 'x' <b>!?"]);
+  });
+
+  it('strips markup, scripts and styles from an HTML body without a title', () => {
+    const html =
+      '<html><head><style>p{color:red}</style><script>var secret = 1;</script></head><body><h1>Proxy error</h1><p>Upstream &amp; down</p></body></html>';
+    expect(extractErrorDetails(html, 'text/html')).toEqual(['Proxy error Upstream & down']);
+  });
+});
+
 describe('error classes', () => {
   it('formats JiraApiError, including rate limiting', () => {
     expect(new JiraApiError(400, 'POST', '/rest/api/2/issue', ['a', 'b']).message).toBe(
@@ -68,6 +97,38 @@ describe('error classes', () => {
     );
     expect(new RequestCancelledError('POST', '/rest/api/2/issue', 'write').message).toBe(
       'Jira POST /rest/api/2/issue cancelled by the MCP client. The operation may already have been applied by Jira: check its state before retrying.',
+    );
+  });
+
+  it('shows Retry-After for 503 too, and an HTTP-date as is', () => {
+    expect(new JiraApiError(503, 'GET', '/rest/x', ['busy'], '30').message).toBe(
+      'Jira GET /rest/x failed with HTTP 503: busy — service unavailable (Retry-After: 30 s)',
+    );
+    expect(
+      new JiraApiError(503, 'GET', '/rest/x', [], 'Wed, 21 Oct 2026 07:28:00 GMT').message,
+    ).toBe(
+      'Jira GET /rest/x failed with HTTP 503 — service unavailable (Retry-After: Wed, 21 Oct 2026 07:28:00 GMT)',
+    );
+  });
+
+  it('adds short hints for 401, 403 and 404, and the authentication denial reason', () => {
+    expect(new JiraApiError(401, 'GET', '/rest/x', []).message).toBe(
+      'Jira GET /rest/x failed with HTTP 401 — the PAT is invalid, expired or revoked (check JIRA_PAT)',
+    );
+    expect(
+      new JiraApiError(403, 'GET', '/rest/x', [], null, undefined, 'CAPTCHA_CHALLENGE; login-url=x')
+        .message,
+    ).toBe(
+      'Jira GET /rest/x failed with HTTP 403 — the PAT account lacks the Jira permission for this operation (X-Authentication-Denied-Reason: CAPTCHA_CHALLENGE; login-url=x)',
+    );
+    expect(new JiraApiError(404, 'GET', '/rest/x', ['nope']).message).toBe(
+      'Jira GET /rest/x failed with HTTP 404: nope — not found, or not visible to the PAT account',
+    );
+  });
+
+  it('exposes the write warning used for writes of unknown outcome', () => {
+    expect(WRITE_OUTCOME_UNKNOWN).toBe(
+      'The operation may already have been applied by Jira: check its state before retrying.',
     );
   });
 });

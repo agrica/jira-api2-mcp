@@ -101,6 +101,22 @@ describe('buildCatalog', () => {
     ).toEqual(['POST /rest/api/2/search']);
   });
 
+  it('fails on an operation id declared by two sources', () => {
+    const xml = new Map(XML).set('xray.wadl', wadl('/rest/api/2', 'search', 'POST'));
+    expect(() =>
+      buildCatalog({ xml, decisions: searchDecision, meta: meta(), generatedAt: 'G' }),
+    ).toThrow('Operation POST /rest/api/2/search is declared by both api.wadl and xray.wadl');
+  });
+
+  it('fails when a non-Xray source declares an Xray path (/rest/raven/)', () => {
+    const xml = new Map(XML).set('agile.wadl', wadl('/rest/raven/1.0', 'board', 'GET'));
+    expect(() =>
+      buildCatalog({ xml, decisions: searchDecision, meta: meta(), generatedAt: 'G' }),
+    ).toThrow(
+      'agile.wadl declares GET /rest/raven/1.0/board: Xray paths (/rest/raven/) belong to the xray source',
+    );
+  });
+
   it('fails when a source file is missing', () => {
     expect(() =>
       buildCatalog({ xml: new Map(), decisions: {}, meta: meta(), generatedAt: 'G' }),

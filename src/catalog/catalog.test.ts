@@ -153,13 +153,13 @@ describe('Catalog.buildRequest — path parameters', () => {
       query: { fields: ['summary'] },
       body: undefined,
     });
-    expect(catalog.buildRequest(getIssue, { pathParams: { issueIdOrKey: 'a/b?c' } }).path).toBe(
-      '/rest/api/2/issue/a%2Fb%3Fc',
+    expect(catalog.buildRequest(getIssue, { pathParams: { issueIdOrKey: 'a b?c#d' } }).path).toBe(
+      '/rest/api/2/issue/a%20b%3Fc%23d',
     );
   });
 
   it('rejects traversal-like, empty, mistyped, missing or unknown values', () => {
-    for (const bad of ['..', '.', '']) {
+    for (const bad of ['..', '.', '', 'a/b', '../secure', String.raw`a\b`]) {
       expect(() => catalog.buildRequest(getIssue, { pathParams: { issueIdOrKey: bad } })).toThrow(
         CatalogError,
       );

@@ -99,6 +99,75 @@ describe('loadConfig', () => {
   });
 });
 
+describe('loadConfig — hardening (audit)', () => {
+  it('trims the PAT and accepts visible ASCII only, without echoing the value', () => {
+    expect(loadConfig({ ...base, JIRA_PAT: '  pat-123\n' }).pat).toBe('pat-123');
+    // Built by concatenation so that secrets:scan does not flag this test file.
+    const secret = ['SECRET', 'PAT', 'VALUE123'].join('');
+    for (const pat of [
+      `${secret}\nsecondline`,
+      `${secret}\u0000`,
+      `${secret} x`,
+      `${secret}é`,
+      '   ',
+    ]) {
+      const message = errorMessage(() => loadConfig({ ...base, JIRA_PAT: pat }));
+      expect(message).toMatch(/Invalid configuration — JIRA_PAT/);
+      expect(message).not.toContain(secret);
+    }
+  });
+
+  it('rejects credentials, query and fragment in the base URL without echoing them', () => {
+    const password = ['hunter', '2'].join('');
+    for (const url of [
+      `https://svc:${password}@jira.example.com`,
+      'https://svc@jira.example.com',
+      'https://jira.example.com/jira?os_authType=basic',
+      'https://jira.example.com/jira#f',
+      'https://jira.example.com/?',
+    ]) {
+      const message = errorMessage(() => loadConfig({ ...base, JIRA_BASE_URL: url }));
+      expect(message).toMatch(
+        /Invalid configuration — JIRA_BASE_URL: .*no credentials, query string or fragment/,
+      );
+      expect(message).not.toContain(password);
+      expect(message).not.toContain('svc');
+    }
+  });
+
+  it('normalises the base URL to origin and path', () => {
+    expect(
+      loadConfig({ ...base, JIRA_BASE_URL: 'HTTPS://Jira.Example.com:443/jira//' }).baseUrl,
+    ).toBe('https://jira.example.com/jira');
+  });
+
+  it('bounds the timeout and the response size, and accepts decimal integers only', () => {
+    expect(loadConfig({ ...base, JIRA_TIMEOUT_MS: '600000' }).timeoutMs).toBe(600_000);
+    for (const value of ['600001', '3000000000', '0x10', '1e3', '1.5', '-1', '0', 'abc'])
+      expect(() => loadConfig({ ...base, JIRA_TIMEOUT_MS: value })).toThrow(/JIRA_TIMEOUT_MS/);
+    expect(() => loadConfig({ ...base, JIRA_MAX_RESPONSE_BYTES: '1000000000000000' })).toThrow(
+      /JIRA_MAX_RESPONSE_BYTES/,
+    );
+    expect(() => loadConfig({ ...base, JIRA_MAX_OUTPUT_CHARS: '0x10' })).toThrow(
+      /JIRA_MAX_OUTPUT_CHARS/,
+    );
+  });
+
+  it('treats empty optional variables as unset', () => {
+    const config = loadConfig({
+      ...base,
+      JIRA_ALLOW_WRITES: '',
+      JIRA_ALLOW_INSECURE_HTTP: '',
+      JIRA_ENABLE_XRAY: '',
+      JIRA_TIMEOUT_MS: '',
+      JIRA_MAX_RESPONSE_BYTES: '',
+      JIRA_MAX_OUTPUT_CHARS: '',
+      JIRA_CATALOG_PATH: '',
+    });
+    expect(config).toEqual(loadConfig(base));
+  });
+});
+
 describe('startupWarnings', () => {
   it('warns only when plain HTTP is in use', () => {
     expect(startupWarnings(loadConfig(base))).toEqual([]);

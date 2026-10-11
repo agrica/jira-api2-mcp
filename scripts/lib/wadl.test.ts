@@ -1,6 +1,12 @@
 import { describe, expect, it } from 'vitest';
 import { parseWadl } from './wadl.ts';
 
+/** A WADL declaring a single GET resource at `path`, under a context path. */
+const one = (path: string) => `<?xml version="1.0"?>
+<application xmlns="http://wadl.dev.java.net/2009/02">
+  <resources base="https://jira.example.com/jira/rest/api/2/"><resource path="${path}"><method name="GET"/></resource></resources>
+</application>`;
+
 const WADL = `<?xml version="1.0" encoding="UTF-8" standalone="yes"?>
 <application xmlns="http://wadl.dev.java.net/2009/02">
   <doc xmlns:jersey="http://jersey.java.net/" jersey:generatedBy="Jersey: 1.19"/>
@@ -107,7 +113,7 @@ describe('parseWadl', () => {
       'https://jira.example/rest/api/2/',
       'https://jira.example.com/jira/',
     );
-    expect(parseWadl(noRest, 'api').map((o) => o.id)).toContain('POST /jira/issue');
+    expect(() => parseWadl(noRest, 'api')).toThrow(/"\/jira\/issue" — it must start with \/rest\//);
   });
 
   it('handles template names with "-" or "." and regex constraints with nested braces', () => {
@@ -147,5 +153,25 @@ describe('parseWadl', () => {
       'id',
     ]);
     expect(find('GET /rest/demo/1.0/broken/{oops')?.params).toEqual([]);
+  });
+
+  it('refuses resource paths that escape /rest/ (audit PoC inputs)', () => {
+    for (const path of [
+      '%2e%2e/%2e%2e/%2e%2e/plugins/servlet/x',
+      String.raw`..\..\..\secure\admin`,
+      '../../../secure/Logout!default.jspa',
+      'x?os_authType=basic#',
+      'a%2Fb',
+      './x',
+    ])
+      expect(() => parseWadl(one(path), 'api')).toThrow(/Unsafe operation path in the api WADL/);
+  });
+
+  it('refuses a WADL whose resources base is outside /rest/', () => {
+    const xml = `<?xml version="1.0"?>
+<application xmlns="http://wadl.dev.java.net/2009/02">
+  <resources base="https://jira.example.com/plugins/servlet/"><resource path="x"><method name="GET"/></resource></resources>
+</application>`;
+    expect(() => parseWadl(xml, 'api')).toThrow(/must start with \/rest\//);
   });
 });

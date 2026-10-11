@@ -3,10 +3,7 @@
  * the whole error with its `cause` chain (TLS certificate subject, host names, IPs, ports), which
  * CI masking does not cover: only one sanitized line is ever printed.
  */
-
-const IPV6 =
-  /(?<![\w:.])(?:(?:[0-9a-f]{1,4}:){7}[0-9a-f]{1,4}|(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?::(?:[0-9a-f]{1,4}(?::[0-9a-f]{1,4})*)?(?::\d{1,3}(?:\.\d{1,3}){3})?)(?![\w:.])/gi;
-const IPV4 = /(?<![\d.])(?:\d{1,3}\.){3}\d{1,3}(?![\d.])/g;
+import { redactNetworkDetails } from '../../src/util/redact.ts';
 
 const escapeRegExp = (text: string) => text.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
 
@@ -29,9 +26,7 @@ function redact(text: string, literals: readonly string[]): string {
   let out = text;
   for (const literal of literals)
     out = out.replace(new RegExp(escapeRegExp(literal), 'gi'), '<instance>');
-  return out
-    .replace(IPV6, '<ip>')
-    .replace(IPV4, '<ip>')
+  return redactNetworkDetails(out)
     .replace(/\s*[\r\n]+\s*/g, ' ')
     .trim();
 }
@@ -71,8 +66,6 @@ export function sanitizeError(error: unknown, baseUrl: string | undefined): stri
   for (const inner of causeMessages(error)) {
     message = message.split(` (${inner})`).join('').split(inner).join('');
   }
-  // Defence in depth: certificate subject alternative names (DNS:…, IP Address:…).
-  message = message.replace(/\b(?:DNS|IP Address|URI|email):[^\s,)]+/gi, '<cert-name>');
   const line = `${name}: ${message.trim()}${typeof code === 'string' ? ` [${code}]` : ''}`;
   return redact(line, literals);
 }

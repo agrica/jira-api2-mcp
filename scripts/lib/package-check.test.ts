@@ -1,5 +1,5 @@
 import { describe, expect, it } from 'vitest';
-import { sensitiveLiterals, unexpectedEntries } from './package-check.ts';
+import { containsLiteral, sensitiveLiterals, unexpectedEntries } from './package-check.ts';
 
 describe('unexpectedEntries', () => {
   it('accepts only the manifest, docs, dist and the generated catalog', () => {
@@ -40,5 +40,19 @@ describe('sensitiveLiterals', () => {
     ).toEqual([pat, 'jira.example.com']);
     expect(sensitiveLiterals({})).toEqual([]);
     expect(sensitiveLiterals({ JIRA_BASE_URL: 'not a url' })).toEqual([]);
+  });
+
+  it('returns the bare hostname too when the URL has a port, lower-cased', () => {
+    expect(sensitiveLiterals({ JIRA_BASE_URL: 'https://Jira.Example.com:8443/jira' })).toEqual([
+      'jira.example.com:8443',
+      'jira.example.com',
+    ]);
+  });
+});
+
+describe('containsLiteral', () => {
+  it('matches case-insensitively and ignores empty literals', () => {
+    expect(containsLiteral('see JIRA.EXAMPLE.COM/x', ['jira.example.com'])).toBe(true);
+    expect(containsLiteral('nothing here', ['jira.example.com', ''])).toBe(false);
   });
 });

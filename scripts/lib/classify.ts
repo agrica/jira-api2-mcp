@@ -1,4 +1,5 @@
 import type { Access } from '../../src/http/jira-client.ts';
+import { accessProblem } from '../../src/http/request-guards.ts';
 import type {
   AccessDecision,
   AccessDecisions,
@@ -67,9 +68,8 @@ function validateDecision(op: ParsedOperation, d: AccessDecision): void {
   if (!/^\d{4}-\d{2}-\d{2}$/.test(d.reviewedOn)) {
     throw new Error(`Access decision for ${op.id}: "reviewedOn" must be a YYYY-MM-DD date`);
   }
-  if (op.method === 'DELETE' && d.access === 'read') {
-    throw new Error(`${op.id}: DELETE operations cannot be classified as read`);
-  }
+  const problem = accessProblem(op.method, d.access);
+  if (problem) throw new Error(`${op.id}: ${problem}`);
 }
 
 export function classifyOperations(

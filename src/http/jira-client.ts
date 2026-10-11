@@ -1,13 +1,20 @@
 /* oxlint-disable eslint/no-await-in-loop -- retries and stream reads are inherently sequential */
 import { setTimeout as delay } from 'node:timers/promises';
+import { redactNetworkDetails } from '../util/redact.ts';
 import { currentCancellationSignal } from './cancellation.ts';
 import {
   JiraApiError,
   RequestCancelledError,
+  RequestTimeoutError,
   ResponseTooLargeError,
+  WRITE_OUTCOME_UNKNOWN,
   WritesDisabledError,
   extractErrorDetails,
+  htmlTitle,
+  outcomeWarning,
+  retryAfterLabel,
 } from './jira-error.ts';
+import { accessProblem, restPathProblem } from './request-guards.ts';
 
 export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
 export type Access = 'read' | 'write' | 'destructive';
@@ -44,47 +51,107 @@ export interface JiraClientOptions {
   maxRetries?: number;
   /** Waits before a retry; should reject or return early when `signal` aborts. */
   sleep?: (ms: number, signal?: AbortSignal) => Promise<void>;
+  /** Source of the backoff jitter, in [0, 1). */
+  random?: () => number;
 }
 
 const RETRYABLE_STATUS: ReadonlySet<number> = new Set([429, 502, 503, 504]);
 const ERROR_BODY_MAX_BYTES = 64 * 1024;
 const MAX_RETRY_DELAY_MS = 10_000;
+const SAFE_METHODS: ReadonlySet<string> = new Set(['GET', 'HEAD', 'OPTIONS']);
+const MIN_REDACTED_LENGTH = 6;
+
+/** Network failures worth a retry (read from the `code` of the error's cause chain). */
+const TRANSIENT_CODES: ReadonlySet<string> = new Set([
+  'ECONNRESET',
+  'ECONNREFUSED',
+  'ECONNABORTED',
+  'EPIPE',
+  'ETIMEDOUT',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'EHOSTDOWN',
+  'UND_ERR_SOCKET',
+  'UND_ERR_CLOSED',
+  'UND_ERR_CONNECT_TIMEOUT',
+  'UND_ERR_HEADERS_TIMEOUT',
+  'UND_ERR_BODY_TIMEOUT',
+]);
+/** Failures that happen before the request leaves: a write cannot have been applied. */
+const NOT_SENT_CODES: ReadonlySet<string> = new Set([
+  'ECONNREFUSED',
+  'ENOTFOUND',
+  'EAI_AGAIN',
+  'ENETUNREACH',
+  'EHOSTUNREACH',
+  'ENETDOWN',
+  'EHOSTDOWN',
+  'UND_ERR_CONNECT_TIMEOUT',
+]);
+const TLS_CODE = /CERT|^ERR_TLS_|^ERR_SSL_|^UNABLE_TO_/;
 
 export function isRetryable(req: JiraRequest): boolean {
   return req.access === 'read' && !(req.body instanceof FormData);
 }
 
 /**
- * Delay before the next retry: the server's Retry-After (seconds) when valid, else exponential backoff
- * capped at MAX_RETRY_DELAY_MS. Returns `undefined` when Retry-After asks for longer than the cap:
- * retrying earlier than the server asked would be pointless, so the caller gives up instead.
+ * Retry-After in milliseconds: delta-seconds or an HTTP-date (RFC 9110), `undefined` when absent or
+ * invalid. A date in the past means "now".
  */
-export function retryDelayMs(retryAfter: string | null, attempt: number): number | undefined {
+export function parseRetryAfterMs(value: string | null, now: number): number | undefined {
+  const text = value?.trim();
   // Number('') is 0: a blank header must fall back to the backoff, not mean "retry now".
-  const seconds = retryAfter?.trim() ? Number(retryAfter) : Number.NaN;
-  if (Number.isFinite(seconds) && seconds >= 0) {
-    const waitMs = seconds * 1000;
-    return waitMs > MAX_RETRY_DELAY_MS ? undefined : waitMs;
+  if (!text) return undefined;
+  const seconds = Number(text);
+  if (Number.isFinite(seconds)) return seconds >= 0 ? seconds * 1000 : undefined;
+  const date = Date.parse(text);
+  return Number.isNaN(date) ? undefined : Math.max(0, date - now);
+}
+
+/** Exponential backoff capped at MAX_RETRY_DELAY_MS, with "equal jitter" (half fixed, half random). */
+function backoffMs(attempt: number, random: () => number): number {
+  return Math.round(Math.min(500 * 2 ** attempt, MAX_RETRY_DELAY_MS) * (0.5 + random() / 2));
+}
+
+/**
+ * Delay before the next retry: the server's Retry-After (seconds or HTTP-date) when valid, else the
+ * backoff. Returns `undefined` when Retry-After asks for longer than the cap: retrying earlier than
+ * the server asked would be pointless, so the caller gives up instead.
+ */
+export function retryDelayMs(
+  retryAfter: string | null,
+  attempt: number,
+  now: number = Date.now(),
+  random: () => number = () => 1,
+): number | undefined {
+  const serverMs = parseRetryAfterMs(retryAfter, now);
+  if (serverMs === undefined) return backoffMs(attempt, random);
+  return serverMs > MAX_RETRY_DELAY_MS ? undefined : serverMs;
+}
+
+/** First string `code` along the cause chain (undici puts the system error code on the cause). */
+function causeCode(error: unknown): string | undefined {
+  const seen = new Set<unknown>();
+  let current: unknown = error;
+  while (typeof current === 'object' && current !== null && !seen.has(current)) {
+    seen.add(current);
+    const code = (current as { code?: unknown }).code;
+    if (typeof code === 'string') return code;
+    current = (current as { cause?: unknown }).cause;
   }
-  return backoffMs(attempt);
+  return undefined;
 }
 
-/** Backoff delay when there is no Retry-After header (always defined). */
-function backoffMs(attempt: number): number {
-  return Math.min(500 * 2 ** attempt, MAX_RETRY_DELAY_MS);
-}
+/** fetch() failed: `transient` failures (connection reset, DNS hiccup…) are worth a retry for reads. */
+class RequestFailedError extends Error {
+  readonly transient: boolean;
 
-function parseBody(text: string, contentType: string | null): unknown {
-  if (text === '') return null;
-  if (contentType?.includes('json')) return JSON.parse(text) as unknown;
-  return text;
-}
-
-/** The per-attempt timeout elapsed (while waiting for the response or while reading its body). */
-class RequestTimeoutError extends Error {
-  constructor(method: string, path: string, timeoutMs: number, cause: unknown) {
-    super(`Jira ${method} ${path} timed out after ${timeoutMs} ms`, { cause });
-    this.name = 'RequestTimeoutError';
+  constructor(message: string, transient: boolean, cause: unknown) {
+    super(message, { cause });
+    this.name = 'RequestFailedError';
+    this.transient = transient;
   }
 }
 
@@ -97,7 +164,7 @@ async function readBody(
 ): Promise<string> {
   const declared = Number(res.headers.get('content-length') ?? Number.NaN);
   if (onOverflow === 'throw' && Number.isFinite(declared) && declared > maxBytes) {
-    await res.body?.cancel();
+    await res.body?.cancel().catch(() => {});
     throw new ResponseTooLargeError(req.method, req.path, maxBytes);
   }
   if (!res.body) return '';
@@ -106,14 +173,14 @@ async function readBody(
   let total = 0;
   for (;;) {
     if (signal?.aborted) {
-      await reader.cancel();
+      await reader.cancel().catch(() => {});
       throw new RequestCancelledError(req.method, req.path, req.access);
     }
     const { done, value } = await reader.read();
     if (done) break;
     total += value.byteLength;
     if (total > maxBytes) {
-      await reader.cancel();
+      await reader.cancel().catch(() => {});
       if (onOverflow === 'throw') throw new ResponseTooLargeError(req.method, req.path, maxBytes);
       chunks.push(value.subarray(0, value.byteLength - (total - maxBytes)));
       break;
@@ -123,34 +190,62 @@ async function readBody(
   return new TextDecoder().decode(Buffer.concat(chunks));
 }
 
+/** Result of a write that Jira applied (2xx) but whose response body could not be read or parsed. */
+function appliedButUnreadable(req: JiraRequest, status: number, reason: string): JiraResponse {
+  return {
+    status,
+    data: `Jira ${req.method} ${req.path} succeeded (HTTP ${status}): the write WAS applied, but its response could not be read (${reason}). Do not retry it; read the resulting state if you need its details.`,
+  };
+}
+
 export class JiraClient {
   readonly allowWrites: boolean;
-  readonly #baseUrl: string;
+  readonly #origin: string;
+  /** Context path of the instance, without trailing slash ('' at the root). */
+  readonly #basePath: string;
   readonly #pat: string;
   readonly #timeoutMs: number;
   readonly #maxResponseBytes: number;
   readonly #fetch: FetchLike;
   readonly #maxRetries: number;
   readonly #sleep: (ms: number, signal?: AbortSignal) => Promise<void>;
+  readonly #random: () => number;
 
   constructor(options: JiraClientOptions) {
+    const base = new URL(options.baseUrl);
+    if (
+      base.username ||
+      base.password ||
+      base.search ||
+      base.hash ||
+      /[?#]/.test(options.baseUrl)
+    ) {
+      // The URL is not echoed: it may carry credentials.
+      throw new Error(
+        'JiraClient: the base URL must have no credentials, query string or fragment',
+      );
+    }
     this.allowWrites = options.allowWrites;
-    this.#baseUrl = options.baseUrl.replace(/\/+$/, '');
+    this.#origin = base.origin;
+    this.#basePath = base.pathname.replace(/\/+$/, '');
     this.#pat = options.pat;
     this.#timeoutMs = options.timeoutMs;
     this.#maxResponseBytes = options.maxResponseBytes;
     this.#fetch = options.fetch ?? globalThis.fetch;
     this.#maxRetries = options.maxRetries ?? 2;
     this.#sleep = options.sleep ?? ((ms, signal) => delay(ms, undefined, { signal }));
+    this.#random = options.random ?? Math.random;
   }
 
   async request(req: JiraRequest): Promise<JiraResponse> {
-    if (!req.path.startsWith('/rest/')) {
-      throw new Error(`Refusing to call a non-REST path: ${req.path}`);
+    const pathProblem = restPathProblem(req.path);
+    if (pathProblem) {
+      throw new Error(
+        `Refusing to call a non-REST path: ${JSON.stringify(req.path)} (${pathProblem})`,
+      );
     }
-    if (req.access === 'read' && req.method === 'DELETE') {
-      throw new Error(`Inconsistent request: DELETE ${req.path} cannot be classified as read`);
-    }
+    const accessIssue = accessProblem(req.method, req.access);
+    if (accessIssue) throw new Error(`Inconsistent request: ${accessIssue} (${req.path})`);
     if (!this.allowWrites && req.access !== 'read') {
       throw new WritesDisabledError(req.method, req.path);
     }
@@ -173,20 +268,21 @@ export class JiraClient {
           timeout,
         );
       } catch (error) {
-        if (!canRetry || error instanceof RequestCancelledError) throw error;
-        await this.#pause(backoffMs(attempt), req, cancel);
+        if (!canRetry || !this.#worthRetrying(error, req)) throw error;
+        await this.#pause(backoffMs(attempt, this.#random), req, cancel);
         continue;
       }
       let note: string | undefined;
       if (canRetry && RETRYABLE_STATUS.has(res.status)) {
         const retryAfter = res.headers.get('retry-after');
-        const waitMs = retryDelayMs(retryAfter, attempt);
+        const waitMs = retryDelayMs(retryAfter, attempt, Date.now(), this.#random);
         if (waitMs !== undefined) {
-          await res.body?.cancel();
+          // A body stream that already failed rejects on cancel: that must not stop the retry.
+          await res.body?.cancel().catch(() => {});
           await this.#pause(waitMs, req, cancel);
           continue;
         }
-        note = `Retry-After ${retryAfter} s exceeds the retry cap (${MAX_RETRY_DELAY_MS / 1000} s): not retried`;
+        note = `Retry-After ${retryAfterLabel(retryAfter ?? '')} exceeds the retry cap (${MAX_RETRY_DELAY_MS / 1000} s): not retried`;
       }
       const contentType = res.headers.get('content-type');
       let text: string;
@@ -200,12 +296,20 @@ export class JiraClient {
           timeout,
         );
       } catch (error) {
+        // Jira answered 2xx: the write is applied even though its body is too large to read.
+        if (error instanceof ResponseTooLargeError && req.access !== 'read') {
+          return appliedButUnreadable(
+            req,
+            res.status,
+            `it exceeds ${this.#maxResponseBytes} bytes, JIRA_MAX_RESPONSE_BYTES`,
+          );
+        }
         // Cancellation and size limit are final; timeouts and network errors mid-body are retried
         // for reads, like the same failure during fetch (writes never are).
         if (error instanceof RequestCancelledError || error instanceof ResponseTooLargeError)
           throw error;
-        if (canRetry) {
-          await this.#pause(backoffMs(attempt), req, cancel);
+        if (canRetry && this.#worthRetrying(error, req)) {
+          await this.#pause(backoffMs(attempt, this.#random), req, cancel);
           continue;
         }
         throw error;
@@ -218,20 +322,62 @@ export class JiraClient {
           extractErrorDetails(text, contentType),
           res.headers.get('retry-after'),
           note,
+          res.headers.get('x-authentication-denied-reason'),
         );
       }
-      return { status: res.status, data: parseBody(text, contentType) };
+      return this.#parse(text, contentType, req, res.status);
     }
   }
 
+  /** The request URL: always `<base URL>/rest/…` on the base origin, whatever `path` holds. */
   buildUrl(path: string, query?: Readonly<Record<string, QueryValue>>): URL {
-    const url = new URL(this.#baseUrl + path);
+    const url = new URL(this.#origin);
+    url.pathname = this.#basePath + path;
+    if (url.origin !== this.#origin || !url.pathname.startsWith(`${this.#basePath}/rest/`)) {
+      throw new Error('Refusing to call a URL outside <base URL>/rest/');
+    }
     for (const [key, value] of Object.entries(query ?? {})) {
       if (value === undefined) continue;
       const values: readonly QueryScalar[] = typeof value === 'object' ? value : [value];
       for (const v of values) url.searchParams.append(key, String(v));
     }
     return url;
+  }
+
+  /**
+   * Retry policy for a failed attempt (the caller checks the budget and the access class): only
+   * transient network failures and timeouts. A POST read (JQL search) that timed out is not
+   * replayed: it would triple the load of a heavy search on Jira.
+   */
+  #worthRetrying(error: unknown, req: JiraRequest): boolean {
+    if (error instanceof RequestCancelledError) return false;
+    if (error instanceof RequestTimeoutError) return SAFE_METHODS.has(req.method);
+    if (error instanceof RequestFailedError) return error.transient;
+    // Mid-body read failures (connection dropped while streaming).
+    return true;
+  }
+
+  #parse(text: string, contentType: string | null, req: JiraRequest, status: number): JiraResponse {
+    if (text === '') return { status, data: null };
+    const expectsJson = (req.accept ?? 'application/json').includes('json');
+    if (expectsJson && contentType?.includes('html')) {
+      const title = htmlTitle(text);
+      throw new Error(
+        `Jira ${req.method} ${req.path} returned an unexpected HTML response instead of JSON (HTTP ${status}${title ? `: ${JSON.stringify(title)}` : ''}) — authentication proxy or SSO login page? Check JIRA_BASE_URL and the proxy.${outcomeWarning(req.access)}`,
+      );
+    }
+    if (!contentType?.includes('json')) return { status, data: text };
+    try {
+      return { status, data: JSON.parse(text) as unknown };
+    } catch (error) {
+      const mediaType = contentType.split(';')[0]?.trim();
+      if (req.access !== 'read')
+        return appliedButUnreadable(req, status, `unparseable ${mediaType} body`);
+      throw new Error(
+        `Jira ${req.method} ${req.path} returned an unparseable ${mediaType} body (HTTP ${status})`,
+        { cause: error },
+      );
+    }
   }
 
   #prepare(req: JiraRequest): { headers: Record<string, string>; body: RequestInit['body'] } {
@@ -246,6 +392,14 @@ export class JiraClient {
     }
     headers['Content-Type'] = 'application/json';
     return { headers, body: JSON.stringify(req.body) };
+  }
+
+  /** Error text from fetch/undici, safe for the model: no PAT (header errors echo it), no IP or cert name. */
+  #clean(text: string): string {
+    let out = text.replaceAll(`Bearer ${this.#pat}`, 'Bearer <redacted>');
+    // A very short value would also hit ordinary words: it is redacted in its header form only.
+    if (this.#pat.length >= MIN_REDACTED_LENGTH) out = out.replaceAll(this.#pat, '<redacted>');
+    return redactNetworkDetails(out);
   }
 
   async #pause(ms: number, req: JiraRequest, cancel: AbortSignal | undefined): Promise<void> {
@@ -273,15 +427,12 @@ export class JiraClient {
         throw error;
       if (cancel?.aborted) throw new RequestCancelledError(req.method, req.path, req.access);
       if (timeout.aborted)
-        throw new RequestTimeoutError(req.method, req.path, this.#timeoutMs, error);
-      const message = error instanceof Error ? error.message : String(error);
-      const applied =
-        req.access === 'read' ? '' : ' (the write may already have been applied by Jira)';
+        throw new RequestTimeoutError(req.method, req.path, this.#timeoutMs, req.access, error);
+      const message = this.#clean(error instanceof Error ? error.message : String(error));
+      const warning = req.access === 'read' ? '' : `. ${WRITE_OUTCOME_UNKNOWN}`;
       throw new Error(
-        `Jira ${req.method} ${req.path} failed while reading the response: ${message}${applied}`,
-        {
-          cause: error,
-        },
+        `Jira ${req.method} ${req.path} failed while reading the response: ${message}${warning}`,
+        { cause: error },
       );
     }
   }
@@ -299,14 +450,24 @@ export class JiraClient {
     } catch (error) {
       if (cancel?.aborted) throw new RequestCancelledError(req.method, req.path, req.access);
       if (timeout.aborted || (error instanceof DOMException && error.name === 'TimeoutError')) {
-        throw new RequestTimeoutError(req.method, req.path, this.#timeoutMs, error);
+        throw new RequestTimeoutError(req.method, req.path, this.#timeoutMs, req.access, error);
       }
-      const message = error instanceof Error ? error.message : String(error);
-      const cause =
-        error instanceof Error && error.cause instanceof Error ? ` (${error.cause.message})` : '';
-      throw new Error(`Jira ${req.method} ${req.path} failed: ${message}${cause}`, {
-        cause: error,
-      });
+      const message = this.#clean(error instanceof Error ? error.message : String(error));
+      const inner =
+        error instanceof Error && error.cause instanceof Error ? error.cause.message : undefined;
+      const cause = inner === undefined ? '' : ` (${this.#clean(inner)})`;
+      const hint = /redirect/i.test(inner ?? '')
+        ? ' — redirects are refused: check JIRA_BASE_URL (context path) or an SSO / authentication proxy'
+        : '';
+      const code = causeCode(error);
+      // A connection that was never established cannot have applied a write.
+      const notSent = code !== undefined && (NOT_SENT_CODES.has(code) || TLS_CODE.test(code));
+      const warning = req.access === 'read' || notSent ? '' : `. ${WRITE_OUTCOME_UNKNOWN}`;
+      throw new RequestFailedError(
+        `Jira ${req.method} ${req.path} failed: ${message}${cause}${hint}${warning}`,
+        code !== undefined && TRANSIENT_CODES.has(code),
+        error,
+      );
     }
   }
 }

@@ -12,22 +12,69 @@ export interface JiraConfig {
   enableXray: boolean;
 }
 
-const flag = z.enum(['true', 'false', '1', '0']).transform((v) => v === 'true' || v === '1');
+/** MCP client configs often template unset variables as "": treat them as unset. */
+const blankAsUnset = (value: unknown) => (value === '' ? undefined : value);
+
+const flag = z.preprocess(
+  blankAsUnset,
+  z
+    .enum(['true', 'false', '1', '0'])
+    .default('false')
+    .transform((v) => v === 'true' || v === '1'),
+);
+
+/** A positive decimal integer (no hex, exponent or sign), bounded by `max`. */
+const positiveInt = (fallback: number, max: number) =>
+  z.preprocess(
+    blankAsUnset,
+    z
+      .string()
+      .regex(/^\d+$/, 'must be a positive decimal integer')
+      .transform(Number)
+      .pipe(z.number().int().positive().max(max))
+      .default(fallback),
+  );
+
+/**
+ * The URL is never echoed back: it may carry credentials. Credentials, a query string or a fragment
+ * would be sent with every request or swallow the REST path: they are refused.
+ */
+const baseUrlSchema = z
+  .url({ protocol: /^https?$/, error: 'must be an http(s) URL' })
+  .refine((raw) => {
+    if (!URL.canParse(raw)) return true; // already reported by z.url()
+    const url = new URL(raw);
+    return !url.username && !url.password && !url.search && !url.hash && !/[?#]/.test(raw);
+  }, 'must have no credentials, query string or fragment (e.g. https://jira.example.com/jira)')
+  .transform((raw) => {
+    const url = new URL(raw);
+    return `${url.origin}${url.pathname.replace(/\/+$/, '')}`;
+  });
+
+/** setTimeout overflows above 2^31-1 ms (it then fires after 1 ms): 10 minutes per attempt is plenty. */
+const MAX_TIMEOUT_MS = 600_000;
+/** The body is held in memory then decoded as one string. */
+const MAX_RESPONSE_BYTES = 256 * 1024 * 1024;
+const MAX_OUTPUT_CHARS = 100_000_000;
 
 const envSchema = z.object({
-  JIRA_BASE_URL: z.url({ protocol: /^https?$/ }).transform((url) => url.replace(/\/+$/, '')),
-  JIRA_PAT: z.string().min(1),
-  JIRA_ALLOW_WRITES: flag.default(false),
-  JIRA_ALLOW_INSECURE_HTTP: flag.default(false),
-  JIRA_TIMEOUT_MS: z.coerce.number().int().positive().default(30_000),
-  JIRA_MAX_RESPONSE_BYTES: z.coerce
-    .number()
-    .int()
-    .positive()
-    .default(5 * 1024 * 1024),
-  JIRA_MAX_OUTPUT_CHARS: z.coerce.number().int().positive().default(100_000),
-  JIRA_CATALOG_PATH: z.string().min(1).optional(),
-  JIRA_ENABLE_XRAY: flag.default(false),
+  JIRA_BASE_URL: baseUrlSchema,
+  // The PAT goes into an HTTP header: visible ASCII only. The value is never echoed back.
+  JIRA_PAT: z
+    .string()
+    .trim()
+    .min(1, 'must not be empty')
+    .regex(
+      /^[\x21-\x7e]+$/,
+      'must contain visible ASCII characters only (no space, line break or control character)',
+    ),
+  JIRA_ALLOW_WRITES: flag,
+  JIRA_ALLOW_INSECURE_HTTP: flag,
+  JIRA_TIMEOUT_MS: positiveInt(30_000, MAX_TIMEOUT_MS),
+  JIRA_MAX_RESPONSE_BYTES: positiveInt(5 * 1024 * 1024, MAX_RESPONSE_BYTES),
+  JIRA_MAX_OUTPUT_CHARS: positiveInt(100_000, MAX_OUTPUT_CHARS),
+  JIRA_CATALOG_PATH: z.preprocess(blankAsUnset, z.string().optional()),
+  JIRA_ENABLE_XRAY: flag,
 });
 
 function isPlainHttp(url: string): boolean {

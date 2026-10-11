@@ -2,7 +2,7 @@ import { execFileSync } from 'node:child_process';
 import { mkdtemp, readFile, rm } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { sensitiveLiterals, unexpectedEntries } from './lib/package-check.ts';
+import { containsLiteral, sensitiveLiterals, unexpectedEntries } from './lib/package-check.ts';
 import { findSecrets } from './lib/secret-scan.ts';
 
 const tarball = process.argv[2];
@@ -30,7 +30,7 @@ try {
     }
     // Only names of findings are printed, never the matched values.
     const hits = findSecrets(text);
-    if (literals.some((value) => text.includes(value))) hits.push('sensitive environment value');
+    if (containsLiteral(text, literals)) hits.push('sensitive environment value');
     if (hits.length > 0) problems.push(`${entry}: ${hits.join(', ')}`);
   }
 } finally {

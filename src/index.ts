@@ -46,8 +46,17 @@ if (catalog.families.includes('xray') && !catalog.availableFamilies.includes('xr
   );
 }
 
-serveStdio(() => createServer({ client, catalog, maxOutputChars: config.maxOutputChars }), {
-  onerror: (error) => console.error('[jira-mcp]', error.message),
+const makeServer = () => createServer({ client, catalog, maxOutputChars: config.maxOutputChars });
+// serveStdio calls the factory lazily, on the first message: build one server now so that a
+// factory failure exits with a clear message instead of answering "Internal server error" forever.
+try {
+  makeServer();
+} catch (error) {
+  fail(error);
+}
+
+serveStdio(makeServer, {
+  onerror: (error) => console.error('[jira-mcp]', error.stack ?? error.message),
 });
 console.error(
   // The instance URL is not logged: stderr may end up in shared logs (e.g. CI).

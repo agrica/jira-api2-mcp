@@ -11,10 +11,12 @@ const PATTERNS: readonly { name: string; regex: RegExp }[] = [
   },
 ];
 
-/** Returns the names of the secret patterns found in `text` (empty when clean). */
+/** Returns the names of the secret patterns found in `text` (empty when clean); literals match case-insensitively. */
 export function findSecrets(text: string, literals: readonly string[] = []): string[] {
   const found = PATTERNS.filter((p) => p.regex.test(text)).map((p) => p.name);
-  if (literals.some((value) => value.trim().length >= 8 && text.includes(value.trim()))) {
+  const haystack = text.toLowerCase();
+  const known = literals.map((value) => value.trim().toLowerCase()).filter((v) => v.length >= 8);
+  if (known.some((value) => haystack.includes(value))) {
     found.push('known secret value');
   }
   return found;

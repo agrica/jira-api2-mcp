@@ -68,6 +68,12 @@ function encodePathParam(
   if (text === '' || text === '.' || text === '..') {
     throw new CatalogError(`Invalid value for path parameter "${p.name}": "${text}"`);
   }
+  // Encoded as %2F / %5C they would be refused by the client (and by Tomcat by default): say so here.
+  if (/[/\\]/.test(text)) {
+    throw new CatalogError(
+      `Invalid value for path parameter "${p.name}": "/" and "\\" are not allowed in a path segment`,
+    );
+  }
   checkType(op, p, value);
   return encodeURIComponent(text);
 }

@@ -1,6 +1,7 @@
 import { XMLParser } from 'fast-xml-parser';
 import { PATH_PLACEHOLDER } from '../../src/catalog/catalog.ts';
 import type { HttpMethod } from '../../src/http/jira-client.ts';
+import { restPathProblem } from '../../src/http/request-guards.ts';
 import type {
   ApiFamily,
   OperationParam,
@@ -167,6 +168,13 @@ function walk(
 
   for (const m of res.method ?? []) {
     if (!METHODS.has(m.name)) continue;
+    // A crafted WADL must not produce an operation that escapes /rest/ (traversal, encoded
+    // separators, query or fragment injection): the build fails instead.
+    const problem = restPathProblem(path);
+    if (problem)
+      throw new Error(
+        `Unsafe operation path in the ${api} WADL: ${JSON.stringify(path)} — ${problem}`,
+      );
     const request = m.request?.[0];
     const query = [
       ...resourceQuery,

@@ -98,6 +98,12 @@ describe('classifyOperations — signed decisions', () => {
       classifyOperations(PARSED, { 'DELETE /rest/api/2/issue/{issueIdOrKey}': ok }),
     ).toThrow(/DELETE operations cannot be classified as read/);
     expect(() =>
+      classifyOperations(PARSED, { 'PUT /rest/api/2/issue/{issueIdOrKey}': ok }),
+    ).toThrow(/PUT operations cannot be classified as read/);
+    expect(() =>
+      classifyOperations([op('PATCH', '/rest/api/2/x')], { 'PATCH /rest/api/2/x': ok }),
+    ).toThrow(/PATCH operations cannot be classified as read/);
+    expect(() =>
       classifyOperations(PARSED, { 'POST /rest/api/2/search': { ...ok, reason: ' ' } }),
     ).toThrow(/"reason"/);
     expect(() =>

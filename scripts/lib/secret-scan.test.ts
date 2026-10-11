@@ -14,6 +14,9 @@ describe('findSecrets', () => {
 
   it('detects a known literal value anywhere', () => {
     expect(findSecrets(`blah ${token} blah`, [token])).toEqual(['known secret value']);
+    expect(findSecrets('see https://JIRA.EXAMPLE.COM/x', ['jira.example.com'])).toEqual([
+      'known secret value',
+    ]);
   });
 
   it('ignores placeholders, env references and code templates', () => {

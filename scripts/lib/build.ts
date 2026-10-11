@@ -20,6 +20,8 @@ export function operationsDigest(operations: readonly Operation[]): string {
   return sha256(JSON.stringify(operations));
 }
 
+const XRAY_PREFIX = '/rest/raven/';
+
 const missingMessage = (file: string) =>
   `missing WADL file catalog/wadl/${file}: run npm run catalog:fetch`;
 
@@ -53,10 +55,24 @@ export function buildCatalog(input: {
 } {
   const parsed: ParsedOperation[] = [];
   const counts: Record<ApiFamily, number> = { api: 0, agile: 0, xray: 0 };
+  const sourceOf = new Map<string, string>();
   for (const s of input.meta.sources) {
     const text = input.xml.get(s.file);
     if (text === undefined) throw new Error(missingMessage(s.file));
     const ops = parseWadl(text, s.api);
+    for (const op of ops) {
+      // The runtime indexes operations by id: a duplicate would silently shadow another source.
+      const first = sourceOf.get(op.id);
+      if (first !== undefined)
+        throw new Error(`Operation ${op.id} is declared by both ${first} and ${s.file}`);
+      sourceOf.set(op.id, s.file);
+      // JIRA_ENABLE_XRAY hides operations by family: an Xray path must come from the xray source.
+      if (s.api !== 'xray' && op.path.startsWith(XRAY_PREFIX)) {
+        throw new Error(
+          `${s.file} declares ${op.id}: Xray paths (${XRAY_PREFIX}) belong to the xray source`,
+        );
+      }
+    }
     counts[s.api] += ops.length;
     parsed.push(...ops);
   }

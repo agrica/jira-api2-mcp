@@ -34,6 +34,19 @@ describe('result helpers', () => {
     });
     expect(errorResult('raw')).toEqual({ isError: true, content: [{ type: 'text', text: 'raw' }] });
   });
+
+  it('never splits a surrogate pair when truncating', () => {
+    const text = truncate('a😀b', 2);
+    expect(text.startsWith('a\n')).toBe(true);
+    expect(text.isWellFormed()).toBe(true);
+    expect(text).toContain('3 more characters');
+  });
+
+  it('bounds error text like any other output', () => {
+    const text = errorResult(new Error('e'.repeat(50)), 10).content[0];
+    expect(text).toMatchObject({ type: 'text' });
+    expect((text as { text: string }).text).toMatch(/^e{10}\n… \[output truncated/);
+  });
 });
 
 describe('annotations', () => {

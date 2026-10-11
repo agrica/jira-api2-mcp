@@ -21,6 +21,10 @@ const json = (body: unknown, status = 200, headers: Record<string, string> = {})
     headers: { 'content-type': 'application/json;charset=UTF-8', ...headers },
   });
 
+/** undici-like network failure: TypeError "fetch failed" whose cause carries a system error code. */
+const networkError = (code: string, message = `connect ${code}`) =>
+  new TypeError('fetch failed', { cause: Object.assign(new Error(message), { code }) });
+
 function setup(overrides: Partial<JiraClientOptions> = {}) {
   const fetchMock = vi.fn<FetchLike>();
   const sleep = vi.fn<(ms: number, signal?: AbortSignal) => Promise<void>>(async () => {});
@@ -32,6 +36,7 @@ function setup(overrides: Partial<JiraClientOptions> = {}) {
     maxResponseBytes: 1024 * 1024,
     fetch: fetchMock,
     sleep,
+    random: () => 1,
     ...overrides,
   });
   const call = (index = 0) => {
@@ -267,7 +272,7 @@ describe('JiraClient.request — retries', () => {
 
   it('retries reads after a network error and gives up after maxRetries', async () => {
     const { client, fetchMock } = setup();
-    fetchMock.mockRejectedValueOnce(new TypeError('fetch failed')).mockResolvedValueOnce(json({}));
+    fetchMock.mockRejectedValueOnce(networkError('ECONNRESET')).mockResolvedValueOnce(json({}));
     await client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' });
     expect(fetchMock).toHaveBeenCalledTimes(2);
     fetchMock.mockReset();
@@ -623,8 +628,361 @@ describe('JiraClient.request — network errors during the body read', () => {
     await expect(
       client.request({ method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} }),
     ).rejects.toThrow(
-      'failed while reading the response: terminated (the write may already have been applied by Jira)',
+      'failed while reading the response: terminated. The operation may already have been applied by Jira: check its state before retrying.',
     );
     expect(fetchMock).toHaveBeenCalledOnce();
+  });
+});
+
+describe('JiraClient.request — path hardening (audit)', () => {
+  it('refuses traversal, encoded separators, backslashes, query and fragment without calling Jira', async () => {
+    const { client, fetchMock } = setup({ baseUrl: 'https://jira.example.com/jira' });
+    for (const path of [
+      '/rest/api/2/%2e%2e/%2e%2e/%2e%2e/plugins/servlet/x',
+      '/rest/../../secure/Dashboard.jspa',
+      String.raw`/rest/api/2/..\..\..\secure\admin`,
+      '/rest/api/2/x?os_authType=basic#',
+      '/rest/api/2/issue/a%2Fb',
+    ]) {
+      await expect(client.request({ method: 'GET', path, access: 'read' })).rejects.toThrow(
+        /Refusing to call a non-REST path/,
+      );
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('builds URLs that stay under <base path>/rest/ and refuses any other', () => {
+    const { client } = setup({ baseUrl: 'https://jira.example.com/jira/' });
+    expect(client.buildUrl('/rest/api/2/myself').href).toBe(
+      'https://jira.example.com/jira/rest/api/2/myself',
+    );
+    expect(() => client.buildUrl('/rest/../../secure/Dashboard.jspa')).toThrow(
+      'Refusing to call a URL outside <base URL>/rest/',
+    );
+  });
+
+  it('refuses PUT and PATCH classified as read', async () => {
+    const { client, fetchMock } = setup();
+    for (const method of ['PUT', 'PATCH'] as const) {
+      await expect(
+        client.request({ method, path: '/rest/api/2/issue/DEMO-1', access: 'read' }),
+      ).rejects.toThrow(`Inconsistent request: ${method} operations cannot be classified as read`);
+    }
+    expect(fetchMock).not.toHaveBeenCalled();
+  });
+
+  it('refuses a base URL with credentials, query or fragment, without echoing them', () => {
+    const password = ['hunter', '2'].join('');
+    for (const baseUrl of [
+      `https://svc:${password}@jira.example.com`,
+      'https://jira.example.com/jira?x=1',
+      'https://jira.example.com/jira#f',
+    ]) {
+      let message = '';
+      try {
+        setup({ baseUrl });
+      } catch (error) {
+        message = (error as Error).message;
+      }
+      expect(message).toBe(
+        'JiraClient: the base URL must have no credentials, query string or fragment',
+      );
+    }
+  });
+});
+
+describe('JiraClient.request — PAT never echoed (audit)', () => {
+  it('redacts the PAT from undici header errors and their causes', async () => {
+    const { client, fetchMock } = setup({ maxRetries: 0 });
+    fetchMock.mockRejectedValueOnce(
+      new TypeError('Headers.append: "Bearer secret-pat" is an invalid header value.', {
+        cause: new Error('value secret-pat'),
+      }),
+    );
+    const message = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(message).toContain('Headers.append: "Bearer <redacted>" is an invalid header value.');
+    expect(message).not.toContain('secret-pat');
+  });
+
+  it('redacts a very short PAT in its header form only, without mangling other words', async () => {
+    const { client, fetchMock } = setup({ pat: 'p', maxRetries: 0 });
+    fetchMock.mockRejectedValueOnce(
+      new TypeError('Headers.append: "Bearer p" is invalid (bad port)'),
+    );
+    const message = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(message).toContain('"Bearer <redacted>" is invalid (bad port)');
+  });
+
+  it('redacts IP addresses and certificate names from network error causes', async () => {
+    const { client, fetchMock } = setup({ maxRetries: 0 });
+    fetchMock.mockRejectedValueOnce(
+      networkError('ECONNREFUSED', 'connect ECONNREFUSED 192.0.2.10:443'),
+    );
+    fetchMock.mockRejectedValueOnce(
+      networkError(
+        'ERR_TLS_CERT_ALTNAME_INVALID',
+        "Hostname/IP does not match certificate's altnames: DNS:internal.example.org, IP Address:192.0.2.11",
+      ),
+    );
+    const first = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(first).toBe(
+      'Jira GET /rest/api/2/myself failed: fetch failed (connect ECONNREFUSED <ip>:443)',
+    );
+    const second = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(second).not.toContain('internal.example.org');
+    expect(second).not.toContain('192.0.2.11');
+  });
+});
+
+describe('JiraClient.request — writes of unknown outcome (audit)', () => {
+  const write = { method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} } as const;
+  const warning = 'may already have been applied by Jira: check its state before retrying';
+
+  it('warns on a write timeout while waiting for the response, not on a read timeout', async () => {
+    const { client, fetchMock } = setup({ timeoutMs: 20, maxRetries: 0 });
+    fetchMock.mockImplementation(hangingFetch);
+    await expect(client.request(write)).rejects.toThrow(
+      `Jira POST /rest/api/2/issue timed out after 20 ms. The operation ${warning}`,
+    );
+    const read = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(read).toBe('Jira GET /rest/api/2/myself timed out after 20 ms.');
+  });
+
+  it('warns on a write timeout while reading the body (multipart included)', async () => {
+    const { client, fetchMock } = setup({ timeoutMs: 20 });
+    fetchMock.mockImplementation(stallingBodyFetch);
+    await expect(client.request(write)).rejects.toThrow(warning);
+    await expect(
+      client.request({
+        method: 'POST',
+        path: '/rest/api/2/issue/DEMO-1/attachments',
+        access: 'write',
+        body: new FormData(),
+      }),
+    ).rejects.toThrow(warning);
+  });
+
+  it('warns on a connection reset after sending, not on a refused connection', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock.mockRejectedValueOnce(networkError('UND_ERR_SOCKET', 'other side closed'));
+    await expect(client.request(write)).rejects.toThrow(
+      `Jira POST /rest/api/2/issue failed: fetch failed (other side closed). The operation ${warning}`,
+    );
+    fetchMock.mockRejectedValueOnce(networkError('ECONNREFUSED'));
+    const refused = await client.request(write).catch((e: unknown) => (e as Error).message);
+    expect(refused).toBe('Jira POST /rest/api/2/issue failed: fetch failed (connect ECONNREFUSED)');
+    fetchMock.mockRejectedValueOnce(networkError('UND_ERR_SOCKET', 'other side closed'));
+    await expect(
+      client.request({ method: 'DELETE', path: '/rest/api/2/issue/DEMO-1', access: 'destructive' }),
+    ).rejects.toThrow(warning);
+  });
+
+  it('warns on a write whose error body fails mid-stream', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock.mockResolvedValueOnce(
+      new Response(
+        new ReadableStream<Uint8Array>({
+          pull(controller) {
+            controller.error(new TypeError('terminated'));
+          },
+        }),
+        { status: 500 },
+      ),
+    );
+    await expect(client.request(write)).rejects.toThrow(
+      `failed while reading the response: terminated. The operation ${warning}`,
+    );
+  });
+
+  it('reports a 2xx write with a too-large body as applied, not as a failure', async () => {
+    const { client, fetchMock } = setup({ maxResponseBytes: 10 });
+    fetchMock.mockResolvedValueOnce(json({ key: 'DEMO-1', padding: 'x'.repeat(100) }, 201));
+    const res = await client.request(write);
+    expect(res.status).toBe(201);
+    expect(res.data).toBe(
+      'Jira POST /rest/api/2/issue succeeded (HTTP 201): the write WAS applied, but its response could not be read (it exceeds 10 bytes, JIRA_MAX_RESPONSE_BYTES). Do not retry it; read the resulting state if you need its details.',
+    );
+    fetchMock.mockResolvedValueOnce(
+      new Response('{}', {
+        status: 200,
+        headers: { 'content-type': 'application/json', 'content-length': '5000' },
+      }),
+    );
+    expect((await client.request({ ...write, method: 'PUT' })).data).toMatch(
+      /succeeded \(HTTP 200\): the write WAS applied/,
+    );
+  });
+
+  it('reports a 2xx write with invalid JSON as applied, and a read with invalid JSON as an error', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock.mockResolvedValueOnce(badJson());
+    expect((await client.request(write)).data).toBe(
+      'Jira POST /rest/api/2/issue succeeded (HTTP 201): the write WAS applied, but its response could not be read (unparseable application/json body). Do not retry it; read the resulting state if you need its details.',
+    );
+    fetchMock.mockResolvedValueOnce(badJson());
+    await expect(
+      client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' }),
+    ).rejects.toThrow(
+      'Jira GET /rest/api/2/myself returned an unparseable application/json body (HTTP 201)',
+    );
+  });
+});
+
+/** 201 whose JSON body is truncated (e.g. rewritten by a proxy). */
+const badJson = () =>
+  new Response('{"key": "DEMO-1"', {
+    status: 201,
+    headers: { 'content-type': 'application/json' },
+  });
+
+/** Login page of an authentication proxy, answered with a 2xx status. */
+const loginPage = (status = 200) =>
+  new Response('<html><head><title>Log in - SSO &amp; Co</title></head><body>form</body></html>', {
+    status,
+    headers: { 'content-type': 'text/html;charset=UTF-8' },
+  });
+
+describe('JiraClient.request — 2xx HTML instead of JSON (audit)', () => {
+  it('turns a 2xx HTML page into an error for a JSON read', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock.mockResolvedValueOnce(loginPage());
+    await expect(
+      client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' }),
+    ).rejects.toThrow(
+      'Jira GET /rest/api/2/myself returned an unexpected HTML response instead of JSON (HTTP 200: "Log in - SSO & Co") — authentication proxy or SSO login page? Check JIRA_BASE_URL and the proxy.',
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('adds the unknown-outcome warning for a write', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock.mockResolvedValueOnce(loginPage(201));
+    await expect(
+      client.request({ method: 'POST', path: '/rest/api/2/issue', access: 'write', body: {} }),
+    ).rejects.toThrow(
+      /unexpected HTML response instead of JSON \(HTTP 201: "Log in - SSO & Co"\).*Check JIRA_BASE_URL and the proxy\. The operation may already have been applied by Jira/,
+    );
+  });
+
+  it('keeps HTML when it was asked for, and text or empty bodies as before', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock
+      .mockResolvedValueOnce(loginPage())
+      .mockResolvedValueOnce(new Response('plain', { headers: { 'content-type': 'text/plain' } }))
+      .mockResolvedValueOnce(new Response('', { headers: { 'content-type': 'text/html' } }));
+    const html = await client.request({
+      method: 'GET',
+      path: '/rest/x',
+      access: 'read',
+      accept: 'text/html',
+    });
+    expect(html.data).toContain('<title>');
+    const plain = await client.request({ method: 'GET', path: '/rest/x', access: 'read' });
+    expect(plain.data).toBe('plain');
+    const empty = await client.request({ method: 'GET', path: '/rest/x', access: 'read' });
+    expect(empty.data).toBeNull();
+  });
+});
+
+describe('JiraClient.request — retry policy (audit)', () => {
+  it('honours Retry-After given as an HTTP-date', async () => {
+    const { client, fetchMock, sleep } = setup();
+    const soon = new Date(Date.now() + 3000).toUTCString();
+    fetchMock
+      .mockResolvedValueOnce(
+        new Response('busy', { status: 503, headers: { 'retry-after': soon } }),
+      )
+      .mockResolvedValueOnce(json({ ok: true }));
+    await client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' });
+    const waited = sleep.mock.calls[0]?.[0] ?? -1;
+    expect(waited).toBeGreaterThan(1500);
+    expect(waited).toBeLessThanOrEqual(3000);
+  });
+
+  it('surfaces a 503 whose Retry-After date is beyond the cap, with the date', async () => {
+    const { client, fetchMock, sleep } = setup();
+    const later = new Date(Date.now() + 3_600_000).toUTCString();
+    fetchMock.mockResolvedValueOnce(
+      new Response('busy', { status: 503, headers: { 'retry-after': later } }),
+    );
+    const message = await client
+      .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
+      .catch((e: unknown) => (e as Error).message);
+    expect(message).toBe(
+      `Jira GET /rest/api/2/myself failed with HTTP 503: busy — service unavailable (Retry-After: ${later}) — Retry-After ${later} exceeds the retry cap (10 s): not retried`,
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    expect(sleep).not.toHaveBeenCalled();
+  });
+
+  it('does not retry deterministic fetch failures, and explains a redirect', async () => {
+    const { client, fetchMock } = setup();
+    fetchMock.mockRejectedValueOnce(
+      new TypeError('fetch failed', { cause: new Error('unexpected redirect') }),
+    );
+    await expect(
+      client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' }),
+    ).rejects.toThrow(
+      'Jira GET /rest/api/2/myself failed: fetch failed (unexpected redirect) — redirects are refused: check JIRA_BASE_URL (context path) or an SSO / authentication proxy',
+    );
+    expect(fetchMock).toHaveBeenCalledOnce();
+    fetchMock.mockReset();
+    fetchMock.mockRejectedValueOnce(networkError('UNABLE_TO_VERIFY_LEAF_SIGNATURE'));
+    await expect(
+      client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' }),
+    ).rejects.toThrow('UNABLE_TO_VERIFY_LEAF_SIGNATURE');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('does not retry the timeout of a POST read (heavy JQL search)', async () => {
+    const { client, fetchMock } = setup({ timeoutMs: 20 });
+    fetchMock.mockImplementation(hangingFetch);
+    await expect(
+      client.request({ method: 'POST', path: '/rest/api/2/search', access: 'read', body: {} }),
+    ).rejects.toThrow('timed out after 20 ms');
+    expect(fetchMock).toHaveBeenCalledOnce();
+  });
+
+  it('retries a retryable status whose body stream has already failed', async () => {
+    const { client, fetchMock } = setup();
+    const errored = new ReadableStream<Uint8Array>({
+      start(controller) {
+        controller.error(new TypeError('terminated'));
+      },
+    });
+    fetchMock
+      .mockResolvedValueOnce(new Response(errored, { status: 503 }))
+      .mockResolvedValueOnce(json({ ok: true }));
+    const res = await client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' });
+    expect(res.data).toEqual({ ok: true });
+  });
+
+  it('adds jitter to the backoff (not to Retry-After)', async () => {
+    const { client, fetchMock, sleep } = setup({ random: () => 0 });
+    fetchMock
+      .mockResolvedValueOnce(new Response('', { status: 502 }))
+      .mockResolvedValueOnce(new Response('', { status: 429, headers: { 'retry-after': '2' } }))
+      .mockResolvedValueOnce(json({}));
+    await client.request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' });
+    expect(sleep.mock.calls.map((c) => c[0])).toEqual([250, 2000]);
+  });
+});
+
+describe('retryDelayMs — HTTP-date', () => {
+  it('parses an HTTP-date relative to now, and refuses one beyond the cap', () => {
+    const now = Date.parse('2026-10-11T10:00:00Z');
+    expect(retryDelayMs('Sun, 11 Oct 2026 10:00:05 GMT', 0, now)).toBe(5000);
+    expect(retryDelayMs('Sun, 11 Oct 2026 09:00:00 GMT', 0, now)).toBe(0);
+    expect(retryDelayMs('Sun, 11 Oct 2026 11:00:00 GMT', 0, now)).toBeUndefined();
   });
 });

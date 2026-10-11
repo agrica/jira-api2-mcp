@@ -96,7 +96,10 @@ export const DESTRUCTIVE: ToolAnnotations = {
 
 export function truncate(text: string, maxChars: number): string {
   if (text.length <= maxChars) return text;
-  return `${text.slice(0, maxChars)}\n… [output truncated for the model: ${text.length - maxChars} more characters. Narrow the request (fields, maxResults, filters).]`;
+  // Never cut between the two halves of a surrogate pair: a lone surrogate is invalid JSON-RPC text.
+  const lastCode = text.codePointAt(maxChars - 1) ?? 0;
+  const cut = lastCode > 0xffff ? maxChars - 1 : maxChars;
+  return `${text.slice(0, cut)}\n… [output truncated for the model: ${text.length - cut} more characters. Narrow the request (fields, maxResults, filters).]`;
 }
 
 export function jsonResult(data: unknown, maxChars: number): CallToolResult {
@@ -109,9 +112,10 @@ export function jsonResult(data: unknown, maxChars: number): CallToolResult {
   return { content: [{ type: 'text', text: truncate(text, maxChars) }] };
 }
 
-export function errorResult(error: unknown): CallToolResult {
+export function errorResult(error: unknown, maxChars?: number): CallToolResult {
   const message = error instanceof Error ? error.message : String(error);
-  return { isError: true, content: [{ type: 'text', text: message }] };
+  const text = maxChars === undefined ? message : truncate(message, maxChars);
+  return { isError: true, content: [{ type: 'text', text }] };
 }
 
 export function defineTool<S extends z.ZodObject>(
@@ -131,7 +135,7 @@ export function defineTool<S extends z.ZodObject>(
       const data = await runWithCancellation(ctx.mcpReq.signal, () => handler(args as z.output<S>));
       return jsonResult(data, deps.maxOutputChars);
     } catch (error) {
-      return errorResult(error);
+      return errorResult(error, deps.maxOutputChars);
     }
   });
 }

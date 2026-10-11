@@ -123,21 +123,21 @@ Il n'affiche que des libellés `PASS` / `FAIL` et des comptes, jamais l'URL ni l
 
 Le serveur se configure uniquement par variables d'environnement.
 
-| Variable                   | Requis | Défaut                 | Rôle                                                                                                             |
-| -------------------------- | ------ | ---------------------- | ---------------------------------------------------------------------------------------------------------------- |
-| `JIRA_BASE_URL`            | oui    | —                      | URL de l'instance, par exemple `https://jira.example.com` (valeur fictive). HTTPS exigé par défaut.              |
-| `JIRA_PAT`                 | oui    | —                      | Personal Access Token, envoyé en `Authorization: Bearer`                                                         |
-| `JIRA_ALLOW_WRITES`        | non    | `false`                | active les 10 outils d'écriture dédiés et `jira_call_write_operation`                                            |
-| `JIRA_ENABLE_XRAY`         | non    | `false`                | expose les opérations Xray du catalogue dans les outils génériques                                               |
-| `JIRA_ALLOW_INSECURE_HTTP` | non    | `false`                | accepte `http://` pour des tests locaux exceptionnels (avertissement au démarrage)                               |
-| `JIRA_TIMEOUT_MS`          | non    | `30000`                | délai maximal par tentative de requête                                                                           |
-| `JIRA_MAX_RESPONSE_BYTES`  | non    | `5242880`              | taille maximale d'une réponse HTTP (5 Mio) ; au-delà, la lecture est interrompue                                 |
-| `JIRA_MAX_OUTPUT_CHARS`    | non    | `100000`               | taille maximale du texte rendu au modèle ; au-delà, la sortie est tronquée avec la mention « output truncated »  |
-| `JIRA_CATALOG_PATH`        | non    | `catalog/catalog.json` | emplacement du catalogue (le défaut est résolu par rapport au dossier d'installation, pas au répertoire courant) |
+| Variable                   | Requis | Défaut                 | Rôle                                                                                                                                             |
+| -------------------------- | ------ | ---------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------ |
+| `JIRA_BASE_URL`            | oui    | —                      | URL de l'instance, par exemple `https://jira.example.com` (valeur fictive). HTTPS exigé par défaut. Ni identifiants, ni paramètres, ni fragment. |
+| `JIRA_PAT`                 | oui    | —                      | Personal Access Token, envoyé en `Authorization: Bearer` ; caractères ASCII visibles uniquement (espaces de début et de fin retirés)             |
+| `JIRA_ALLOW_WRITES`        | non    | `false`                | active les 10 outils d'écriture dédiés et `jira_call_write_operation`                                                                            |
+| `JIRA_ENABLE_XRAY`         | non    | `false`                | expose les opérations Xray du catalogue dans les outils génériques                                                                               |
+| `JIRA_ALLOW_INSECURE_HTTP` | non    | `false`                | accepte `http://` pour des tests locaux exceptionnels (avertissement au démarrage)                                                               |
+| `JIRA_TIMEOUT_MS`          | non    | `30000`                | délai maximal par tentative de requête (au plus `600000`, soit 10 min)                                                                           |
+| `JIRA_MAX_RESPONSE_BYTES`  | non    | `5242880`              | taille maximale d'une réponse HTTP (5 Mio) ; au-delà, la lecture est interrompue (au plus `268435456`, 256 Mio)                                  |
+| `JIRA_MAX_OUTPUT_CHARS`    | non    | `100000`               | taille maximale du texte rendu au modèle, messages d'erreur compris ; au-delà, la sortie est tronquée avec la mention « output truncated »       |
+| `JIRA_CATALOG_PATH`        | non    | `catalog/catalog.json` | emplacement du catalogue (le défaut est résolu par rapport au dossier d'installation, pas au répertoire courant)                                 |
 
-Valeurs booléennes acceptées : `true`, `false`, `1`, `0`. Toute autre valeur est refusée au démarrage avec un message qui nomme la variable.
+Valeurs booléennes acceptées : `true`, `false`, `1`, `0`. Les valeurs numériques sont des entiers décimaux positifs (`0x10` ou `1e3` sont refusés). Toute autre valeur est refusée au démarrage avec un message qui nomme la variable, sans reprendre la valeur du PAT ni l'URL. Une variable facultative vide (`""`, fréquent dans les configurations MCP) est traitée comme absente.
 
-**URL de base.** Une URL avec chemin de contexte est prise en charge, par exemple `https://jira.example.com/jira` (valeur fictive) : les chemins du catalogue restent en `/rest/...`. La barre oblique finale est ignorée.
+**URL de base.** Une URL avec chemin de contexte est prise en charge, par exemple `https://jira.example.com/jira` (valeur fictive) : les chemins du catalogue restent en `/rest/...`. La barre oblique finale est ignorée. Une URL qui contient des identifiants (`https://user:motdepasse@…`), des paramètres (`?…`) ou un fragment (`#…`) est refusée au démarrage : les identifiants finiraient dans les messages d'erreur, et les paramètres ou le fragment avaleraient le chemin REST.
 
 **Xray.** `JIRA_ENABLE_XRAY` agit seulement sur le serveur :
 
@@ -311,6 +311,7 @@ Exemple :
 - **Lecture seule par défaut.** `JIRA_ALLOW_WRITES=true` active les outils d'écriture (dont `jira_add_attachment`) et `jira_call_write_operation`. Le client HTTP refuse en plus toute requête non `read` quand les écritures sont désactivées.
 - **Classe d'accès.** Chaque opération du catalogue a une classe : `read`, `write` ou `destructive`.
   - Elle vient d'une règle par défaut, selon la méthode HTTP, ou d'une **décision de revue signée**, consignée dans `catalog/access-decisions.json`.
+  - Une méthode PUT, PATCH ou DELETE ne peut jamais être classée `read`, ni par une décision de revue ni dans un catalogue chargé (`JIRA_CATALOG_PATH`) ; un POST classé `read` (recherche JQL) doit venir d'une décision de revue. Le client HTTP refuse aussi ces combinaisons.
   - Des heuristiques de chemin désignent les opérations à revoir : GET dont le nom évoque un effet de bord, POST dont le nom évoque une lecture, POST/PUT/PATCH dont le nom évoque une suppression.
   - **Ces heuristiques ne détectent rien** : chaque candidat est décidé par une personne, et `npm run catalog:check` bloque tant qu'un candidat n'est pas décidé.
 - **Risque résiduel sur les GET.**
@@ -319,17 +320,28 @@ Exemple :
   - Ce risque est accepté explicitement à chaque livraison, dans une note de `docs/delivery/`.
   - **La barrière effective reste les permissions Jira du PAT utilisé.**
 - **Annotations MCP.** Ce sont des **indications** pour le client MCP, par exemple pour qu'il demande une confirmation ; elles ne protègent rien.
-- **Reprises.** Seules les lectures sont réessayées : sur 429, 502, 503, 504, erreur réseau ou coupure pendant la réception, avec 2 reprises au maximum. Si Jira demande d'attendre plus de 10 s (`Retry-After`), l'erreur 429 est renvoyée sans nouvelle tentative. Une écriture n'est jamais rejouée.
+- **Reprises.** Seules les lectures sont réessayées, avec 2 reprises au maximum :
+  - sur 429, 502, 503, 504, délai dépassé, erreur réseau transitoire (connexion coupée ou refusée, DNS momentanément indisponible) ou coupure pendant la réception ;
+  - pas sur une erreur déterministe (redirection, certificat, URL ou en-tête invalide), ni sur le délai dépassé d'une lecture en POST (recherche JQL lourde) ;
+  - `Retry-After` est lu en secondes ou en date HTTP ; si Jira demande d'attendre plus de 10 s, l'erreur 429 ou 503 est renvoyée sans nouvelle tentative, avec la valeur de `Retry-After` ;
+  - sans `Retry-After`, l'attente (0,5 s puis 1 s au plus) est en partie aléatoire, pour que des appels parallèles ne se relancent pas ensemble ;
+  - une écriture n'est jamais rejouée.
 - **Annulation.** Si le client MCP annule un appel, la requête Jira en cours est interrompue et n'est pas réessayée. Une écriture déjà reçue par Jira a pu être appliquée : vérifiez son état avant de la relancer.
+- **Écritures à l'issue incertaine.**
+  - Quand une écriture échoue après avoir pu atteindre Jira (délai dépassé, connexion coupée, coupure pendant la réception, annulation, page HTML à la place de JSON), le message se termine par « The operation may already have been applied by Jira: check its state before retrying. » : vérifiez l'état dans Jira avant de relancer.
+  - Une connexion refusée ou impossible à établir (`ECONNREFUSED`, `ENOTFOUND`, certificat) ne porte pas cet avertissement : la requête n'est pas partie.
+  - Quand Jira a répondu 2xx mais que le corps de la réponse est illisible (trop gros ou JSON invalide), l'outil renvoie un succès : « … succeeded (HTTP 201): the write WAS applied, but its response could not be read (…) ». Ne relancez pas l'écriture.
+- **Réponse HTML.** Une réponse 2xx en HTML là où Jira doit répondre en JSON (page de connexion d'un proxy d'authentification ou d'un SSO) est une erreur, « unexpected HTML response instead of JSON », et non un succès.
 - **Transport.**
   - **HTTPS est exigé par défaut.**
   - Une URL `http://` n'est acceptée qu'avec `JIRA_ALLOW_INSECURE_HTTP=true`, pour des tests locaux exceptionnels. Le serveur affiche alors un avertissement au démarrage, car le PAT circule en clair.
   - Les redirections sont refusées.
+  - Toute requête part vers `<JIRA_BASE_URL>/rest/…` : un chemin qui contient un segment `.` ou `..`, un séparateur encodé (`%2e`, `%2f`, `%5c`), une barre oblique inverse, un `?` ou un `#` est refusé, à la génération du catalogue, à son chargement et à l'envoi de la requête. Une valeur de paramètre de chemin ne peut contenir ni `/` ni `\`.
 - **Taille.**
   - Au-delà de `JIRA_MAX_RESPONSE_BYTES`, la lecture est interrompue et une erreur est renvoyée.
   - La sortie destinée au modèle est limitée à `JIRA_MAX_OUTPUT_CHARS`, avec la mention « output truncated ».
 - **Secrets et inventaire.**
-  - Le PAT n'est jamais journalisé ni versionné (`npm run secrets:scan`).
+  - Le PAT n'est jamais journalisé ni versionné (`npm run secrets:scan`, qui cherche aussi l'hôte de l'instance quand `JIRA_BASE_URL` est défini). Il n'apparaît pas non plus dans les erreurs renvoyées au modèle, dont les adresses IP et les noms de certificat sont retirés.
   - L'URL de l'instance n'est pas journalisée au démarrage ; les scripts qui appellent Jira n'affichent qu'une ligne d'erreur nettoyée (sans hôte, adresse IP ni détail de certificat).
   - L'inventaire des endpoints (WADL, `catalog/catalog.json`, rapports) **n'est pas versionné**.
 
@@ -393,17 +405,20 @@ Si `JIRA_CI_ENABLED` ne vaut pas `true`, le job Jira est ignoré.
 
 ## Dépannage
 
-| Symptôme                                                       | Cause probable et solution                                                                                        |
-| -------------------------------------------------------------- | ----------------------------------------------------------------------------------------------------------------- |
-| `Invalid configuration — JIRA_BASE_URL: …`                     | URL absente ou invalide, ou `http://` sans `JIRA_ALLOW_INSECURE_HTTP=true`.                                       |
-| `Operation catalog not found at …`                             | `catalog/catalog.json` absent : voir « Installation », ou définir `JIRA_CATALOG_PATH`.                            |
-| `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN` | Autorité de certification privée non visible de Node : `--use-system-ca` ou `NODE_EXTRA_CA_CERTS`.                |
-| `ENOTFOUND`, `ECONNREFUSED`, délai dépassé                     | Instance non joignable : réseau, VPN ou proxy (`HTTPS_PROXY`, `NO_PROXY`, `NODE_USE_ENV_PROXY=1`).                |
-| 401                                                            | PAT invalide ou expiré.                                                                                           |
-| 403                                                            | Le compte du PAT n'a pas la permission Jira nécessaire.                                                           |
-| Les outils d'écriture n'apparaissent pas                       | `JIRA_ALLOW_WRITES` n'est pas à `true` (lecture seule par défaut).                                                |
-| Opération Xray refusée ou absente                              | `JIRA_ENABLE_XRAY` n'est pas à `true`, ou le plugin Xray n'était pas installé lors de la génération du catalogue. |
-| `catalog:check` échoue                                         | Verrou absent ou différent de l'instance, ou candidat non revu : voir « Catalogue et revue ».                     |
+| Symptôme                                                       | Cause probable et solution                                                                                                   |
+| -------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------- |
+| `Invalid configuration — JIRA_BASE_URL: …`                     | URL absente ou invalide, ou `http://` sans `JIRA_ALLOW_INSECURE_HTTP=true`.                                                  |
+| `Operation catalog not found at …`                             | `catalog/catalog.json` absent : voir « Installation », ou définir `JIRA_CATALOG_PATH`.                                       |
+| `UNABLE_TO_VERIFY_LEAF_SIGNATURE`, `SELF_SIGNED_CERT_IN_CHAIN` | Autorité de certification privée non visible de Node : `--use-system-ca` ou `NODE_EXTRA_CA_CERTS`.                           |
+| `ENOTFOUND`, `ECONNREFUSED`, délai dépassé                     | Instance non joignable : réseau, VPN ou proxy (`HTTPS_PROXY`, `NO_PROXY`, `NODE_USE_ENV_PROXY=1`).                           |
+| `unexpected HTML response instead of JSON`                     | Un proxy d'authentification ou un SSO répond à la place de Jira : vérifiez `JIRA_BASE_URL` (chemin de contexte) et le proxy. |
+| `redirects are refused`                                        | Jira ou un proxy redirige (souvent vers une page de connexion) : vérifiez `JIRA_BASE_URL` et le SSO.                         |
+| `may already have been applied by Jira`                        | L'écriture a pu être appliquée : vérifiez son état dans Jira avant de la relancer.                                           |
+| 401                                                            | PAT invalide ou expiré.                                                                                                      |
+| 403                                                            | Le compte du PAT n'a pas la permission Jira nécessaire.                                                                      |
+| Les outils d'écriture n'apparaissent pas                       | `JIRA_ALLOW_WRITES` n'est pas à `true` (lecture seule par défaut).                                                           |
+| Opération Xray refusée ou absente                              | `JIRA_ENABLE_XRAY` n'est pas à `true`, ou le plugin Xray n'était pas installé lors de la génération du catalogue.            |
+| `catalog:check` échoue                                         | Verrou absent ou différent de l'instance, ou candidat non revu : voir « Catalogue et revue ».                                |
 
 ## Notes Jira Server / Data Center
 
