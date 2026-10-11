@@ -1,8 +1,10 @@
 /* oxlint-disable eslint/no-await-in-loop -- temp files written and loaded one case at a time */
-import { mkdtemp, writeFile } from 'node:fs/promises';
+import { existsSync, readFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
-import { describe, expect, it } from 'vitest';
+import { dirname, join, relative, resolve } from 'node:path';
+import { fileURLToPath } from 'node:url';
+import { afterEach, describe, expect, it } from 'vitest';
+import { tempDirs } from '../test-support/catalog-fixture.ts';
 import { DEFAULT_CATALOG_PATH, loadCatalogFile, parseCatalog } from './load.ts';
 
 const valid = {
@@ -28,18 +30,55 @@ const valid = {
   ],
 };
 
-const tempFile = async (content: string) => {
-  const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-catalog-'));
-  const file = join(dir, 'catalog.json');
-  await writeFile(file, content);
-  return file;
-};
+const temp = tempDirs('jira-mcp-catalog-');
+afterEach(async () => {
+  await temp.cleanup();
+});
+const tempFile = (content: string) => temp.file('catalog.json', content);
 
-describe('loadCatalogFile', () => {
-  it('points by default to catalog/catalog.json at the project root', () => {
-    expect(DEFAULT_CATALOG_PATH.replaceAll('\\', '/')).toMatch(/\/catalog\/catalog\.json$/);
+/** The repository root: the closest parent directory holding a package.json. */
+function repoRoot(): string {
+  let dir = dirname(fileURLToPath(import.meta.url));
+  while (!existsSync(join(dir, 'package.json'))) {
+    const parent = dirname(dir);
+    if (parent === dir) throw new Error('package.json not found');
+    dir = parent;
+  }
+  return dir;
+}
+
+describe('DEFAULT_CATALOG_PATH', () => {
+  const root = repoRoot();
+  const expected = resolve(root, 'catalog', 'catalog.json');
+  const srcModule = resolve(root, 'src', 'catalog', 'load.ts');
+
+  it('is <repo>/catalog/catalog.json from the sources', () => {
+    expect(DEFAULT_CATALOG_PATH).toBe(expected);
   });
 
+  it('is <package>/catalog/catalog.json from the compiled dist/catalog/load.js too', () => {
+    // Where tsc puts the module (tsconfig.build.json rootDir -> outDir), and the shipped files.
+    const build = JSON.parse(readFileSync(join(root, 'tsconfig.build.json'), 'utf8')) as {
+      compilerOptions: { rootDir: string; outDir: string };
+    };
+    const fromRootDir = relative(resolve(root, build.compilerOptions.rootDir), srcModule);
+    const distModule = resolve(root, build.compilerOptions.outDir, fromRootDir).replace(
+      /\.ts$/,
+      '.js',
+    );
+    expect(relative(root, distModule).replaceAll('\\', '/')).toBe('dist/catalog/load.js');
+    // The relative URL used by the source module, applied to the compiled one, must land on
+    // the shipped catalog.
+    const relativeUrl = relative(dirname(srcModule), DEFAULT_CATALOG_PATH);
+    expect(resolve(dirname(distModule), relativeUrl)).toBe(expected);
+    const pkg = JSON.parse(readFileSync(join(root, 'package.json'), 'utf8')) as {
+      files: string[];
+    };
+    expect(pkg.files).toEqual(expect.arrayContaining(['dist', 'catalog/catalog.json']));
+  });
+});
+
+describe('loadCatalogFile', () => {
   it('loads a valid catalog', async () => {
     const catalog = await loadCatalogFile(await tempFile(JSON.stringify(valid)));
     expect(catalog.meta.jiraVersion).toBe('8.20.0');

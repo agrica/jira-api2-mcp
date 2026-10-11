@@ -89,7 +89,11 @@ describe('issue read tools', () => {
 
   it('rejects malformed issue keys before calling Jira', async () => {
     h = await createToolHarness(registerIssueReadTools);
-    expect((await h.call('jira_get_issue', { issueKey: '../../myself' })).isError).toBe(true);
+    // Refused by the issue key schema, not by an unrelated failure.
+    expect(await h.call('jira_get_issue', { issueKey: '../../myself' })).toEqual({
+      isError: true,
+      text: expect.stringMatching(/issueKey/),
+    });
     expect(h.fetchMock).not.toHaveBeenCalled();
   });
 

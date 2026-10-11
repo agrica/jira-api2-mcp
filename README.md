@@ -50,6 +50,8 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 
   Ne désactivez jamais la vérification TLS.
 
+  La commande `jira-mcp` (champ `bin` du paquet) ne passe pas d'option à Node : pour elle, définissez `NODE_OPTIONS=--use-system-ca` dans l'environnement, ou `NODE_EXTRA_CA_CERTS`.
+
 ## Installation
 
 Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Deux façons d'obtenir un serveur prêt à l'emploi :
@@ -286,12 +288,12 @@ Sens d'un lien (`jira_link_issues`) : il est contre-intuitif et **non garanti**.
 
 Ils couvrent les opérations qui n'ont pas d'outil dédié. Démarche : chercher, décrire, puis appeler.
 
-| Outil                       | Annotation | Rôle                                                                                                                                                                   | Paramètres                                                                                                                                                                                                   |
-| --------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------ |
-| `jira_list_operations`      | lecture    | Cherche dans le catalogue ; tous les termes doivent figurer dans l'id (`"METHOD /path"`) ou le résumé. Chaque résultat indique sa classe d'accès.                      | `query` (ex. `"worklog"`, `"sprint issue"`), `api` (`api`, `agile`, et `xray` si activé), `method` (`GET`, `POST`, `PUT`, `DELETE`), `access` (`read`, `write`, `destructive`), `limit` (1 à 100, défaut 20) |
-| `jira_describe_operation`   | lecture    | Définition complète : classe d'accès et son origine, paramètres de chemin et de requête (type, requis si déclaré, répétable), types de corps acceptés, contrôles faits | `operationId`\*                                                                                                                                                                                              |
-| `jira_call_read_operation`  | lecture    | Appelle une opération classée `read` (y compris des POST revus comme lectures). Un corps binaire (fichier) n'est pas transmis au modèle : seule une note est renvoyée  | `operationId`\*, `pathParams`, `query`, `body`                                                                                                                                                               |
-| `jira_call_write_operation` | destructif | Appelle une opération classée `write` ou `destructive` — seulement si `JIRA_ALLOW_WRITES=true`                                                                         | `operationId`\*, `pathParams`, `query`, `body`                                                                                                                                                               |
+| Outil                       | Annotation | Rôle                                                                                                                                                                   | Paramètres                                                                                                                                                                                                                               |
+| --------------------------- | ---------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `jira_list_operations`      | lecture    | Cherche dans le catalogue ; tous les termes doivent figurer dans l'id (`"METHOD /path"`) ou le résumé. Chaque résultat indique sa classe d'accès.                      | `query` (ex. `"worklog"`, `"sprint issue"`), `api` (`api`, `agile`, et `xray` si activé), `method` (`GET`, `POST`, `PUT`, `DELETE`, `PATCH`, `HEAD`, `OPTIONS`), `access` (`read`, `write`, `destructive`), `limit` (1 à 100, défaut 20) |
+| `jira_describe_operation`   | lecture    | Définition complète : classe d'accès et son origine, paramètres de chemin et de requête (type, requis si déclaré, répétable), types de corps acceptés, contrôles faits | `operationId`\*                                                                                                                                                                                                                          |
+| `jira_call_read_operation`  | lecture    | Appelle une opération classée `read` (y compris des POST revus comme lectures). Un corps binaire (fichier) n'est pas transmis au modèle : seule une note est renvoyée  | `operationId`\*, `pathParams`, `query`, `body`                                                                                                                                                                                           |
+| `jira_call_write_operation` | destructif | Appelle une opération classée `write` ou `destructive` — seulement si `JIRA_ALLOW_WRITES=true`                                                                         | `operationId`\*, `pathParams`, `query`, `body`                                                                                                                                                                                           |
 
 Contrôles faits avant l'appel :
 
@@ -395,36 +397,54 @@ Le workflow `.github/workflows/ci.yml` comprend deux jobs :
 - **`static`** : format, lint, types, tests, couverture et recherche de secrets, sur un runner GitHub-hosted, sans secret.
 - **`catalog-and-package`** : récupération des WADL, génération et vérification du catalogue, build, test de fumée en lecture seule, création et conservation du paquet.
 
-**À configurer dans le dépôt** (_Settings › Secrets and variables › Actions_). Tous les noms sont des exemples, à adapter :
+**Environnement `jira`.** Le job `catalog-and-package` exécute le code de la branche (scripts, `package.json`) avec le PAT, éventuellement sur un runner situé dans le réseau interne. Ses secrets sont donc rangés dans un environnement GitHub protégé, et non au niveau du dépôt :
 
-| Type     | Nom                 | Contenu                                                                            |
-| -------- | ------------------- | ---------------------------------------------------------------------------------- |
-| Secret   | `JIRA_READONLY_PAT` | PAT d'un compte Jira sans droit d'écriture                                         |
-| Secret   | `JIRA_BASE_URL`     | URL de l'instance (un secret, pour être masquée dans les journaux)                 |
-| Variable | `JIRA_CI_ENABLED`   | `true` pour activer le job Jira                                                    |
-| Variable | `SMOKE_PROJECT`     | clé d'un projet lisible par ce compte                                              |
-| Variable | `JIRA_RUNNER_LABEL` | label du runner du job Jira (par défaut `ubuntu-latest`)                           |
-| Variable | `PUBLISH_ARTIFACT`  | `true` pour conserver le paquet comme artefact (dépôt privé ou interne uniquement) |
+1. Créez l'environnement `jira` (_Settings › Environments › New environment_).
+2. Déplacez-y les secrets `JIRA_READONLY_PAT` et `JIRA_BASE_URL`, puis supprimez-les des secrets du dépôt.
+3. Activez **Required reviewers** : chaque exécution du job attend l'approbation d'une autre personne avant qu'une étape ne reçoive le PAT.
+4. Dans **Deployment branches and tags**, choisissez **Protected branches only** : une branche non protégée ne peut pas atteindre les secrets. Conséquence : le job Jira d'une pull request est refusé par l'environnement (exécution en échec) ; seuls les pushes et les lancements manuels sur une branche protégée l'exécutent.
+
+**À configurer** (_Settings › Environments_ pour les secrets, _Settings › Secrets and variables › Actions_ pour les variables). Tous les noms sont des exemples, à adapter :
+
+| Type                             | Nom                 | Contenu                                                                            |
+| -------------------------------- | ------------------- | ---------------------------------------------------------------------------------- |
+| Secret de l'environnement `jira` | `JIRA_READONLY_PAT` | PAT d'un compte Jira sans droit d'écriture                                         |
+| Secret de l'environnement `jira` | `JIRA_BASE_URL`     | URL de l'instance (un secret, pour être masquée dans les journaux)                 |
+| Variable                         | `JIRA_CI_ENABLED`   | `true` pour activer le job Jira                                                    |
+| Variable                         | `SMOKE_PROJECT`     | clé d'un projet lisible par ce compte                                              |
+| Variable                         | `JIRA_RUNNER_LABEL` | label du runner du job Jira (par défaut `ubuntu-latest`)                           |
+| Variable                         | `PUBLISH_ARTIFACT`  | `true` pour conserver le paquet comme artefact (dépôt privé ou interne uniquement) |
 
 **Runner self-hosted.** Il est nécessaire dans deux cas :
 
 - l'instance n'est pas joignable depuis Internet ;
 - elle utilise une autorité de certification privée.
 
-Placez alors le runner dans un réseau qui atteint l'instance, installez l'autorité dans son magasin système, et indiquez son label dans `JIRA_RUNNER_LABEL`.
+Placez alors le runner dans un réseau qui atteint l'instance, installez l'autorité dans son magasin système, et indiquez son label dans `JIRA_RUNNER_LABEL`. De préférence, utilisez un runner éphémère, ou réservez son groupe de runners à ce dépôt et à ce workflow : son espace de travail persiste sinon d'un job à l'autre.
 
-Si `JIRA_CI_ENABLED` ne vaut pas `true`, le job Jira est ignoré.
+Si `JIRA_CI_ENABLED` ne vaut pas `true`, le job Jira est ignoré ; il l'est aussi pour les pull requests venant d'un fork et pour Dependabot, qui ne reçoivent pas les secrets.
+
+**Paquet.** Le job crée le paquet avec `npm run package` (recompilation complète de `dist/`), puis `scripts/check-package.ts` vérifie son contenu : fichiers attendus présents (`package.json`, `README.md`, `dist/index.js` avec sa ligne `#!/usr/bin/env node`, `dist/catalog/load.js`, `catalog/catalog.json`), aucun fichier hors liste, ni PAT, ni nom d'hôte de l'instance.
 
 ## Développement
 
-| Commande                        | Effet                                                                                |
-| ------------------------------- | ------------------------------------------------------------------------------------ |
-| `npm run dev`                   | lance le serveur depuis les sources, avec rechargement                               |
-| `npm run build` / `npm start`   | compile `dist/` / lance le serveur compilé                                           |
-| `npm test` / `npm run coverage` | tests unitaires (sans Jira, sans catalogue généré)                                   |
-| `npm run check`                 | format, lint, types, couverture, recherche de secrets                                |
-| `npm run verify`                | `check` + `catalog:check`                                                            |
-| `npm run smoke`                 | test de fumée réel en lecture seule (après `npm run build` ; `SMOKE_PROJECT` requis) |
+| Commande                                           | Effet                                                                                 |
+| -------------------------------------------------- | ------------------------------------------------------------------------------------- |
+| `npm run dev`                                      | lance le serveur depuis les sources, avec rechargement                                |
+| `npm run build` / `npm start`                      | vide puis recompile `dist/` / lance le serveur compilé                                |
+| `npm run clean`                                    | supprime `dist/`                                                                      |
+| `npm run package`                                  | recompile `dist/` puis crée le paquet `jira-mcp-<version>.tgz` (voir ci-dessous)      |
+| `npm test` / `npm run test:watch`                  | tests (sans Jira ni catalogue généré), une fois / en continu                          |
+| `npm run coverage`                                 | tests avec couverture (seuils : 90 % lignes, fonctions, instructions ; 85 % branches) |
+| `npm run format` / `npm run format:check`          | met en forme / vérifie la mise en forme (oxfmt)                                       |
+| `npm run lint` / `npm run typecheck`               | oxlint / contrôle des types                                                           |
+| `npm run secrets:scan`                             | cherche des secrets dans les fichiers suivis et non ignorés par git                   |
+| `npm run check`                                    | format, lint, types, couverture, recherche de secrets                                 |
+| `npm run verify`                                   | `check` + `catalog:check`                                                             |
+| `npm run smoke`                                    | test de fumée réel en lecture seule (après `npm run build` ; `SMOKE_PROJECT` requis)  |
+| `npm run catalog:fetch`, `build`, `check`, `drift` | catalogue : voir « Installation » et « Catalogue et revue »                           |
+
+**Paquet local.** `.npmrc` contient `ignore-scripts=true` (aucun script de dépendance ne s'exécute à l'installation) ; un simple `npm pack` saute donc le script `prepack` et emballerait `dist/` tel quel, éventuellement périmé. Utilisez `npm run package`, qui lance `npm pack --ignore-scripts=false` : `prepack` recompile alors `dist/` à partir de zéro. Sans catalogue généré, contrôlez le paquet avec `node scripts/check-package.ts --no-catalog jira-mcp-<version>.tgz` (la CI, elle, exige le catalogue).
 
 **Règle d'or :** stdout est le canal MCP. N'utilisez jamais `console.log` (oxlint le refuse).
 

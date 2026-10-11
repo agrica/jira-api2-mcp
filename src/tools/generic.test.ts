@@ -213,7 +213,7 @@ describe('generic catalog tools', () => {
     expect(truncated.text).toContain('[output truncated for the model:');
   });
 
-  // H15 — end-to-end: cancelling the MCP call must abort the Jira request in flight.
+  // End-to-end: cancelling the MCP call must abort the Jira request in flight.
   it('aborts the Jira request when the MCP call is cancelled', async () => {
     await start();
     let jiraSignal: AbortSignal | undefined;
@@ -251,6 +251,26 @@ describe('generic catalog tools (descriptions, binary bodies)', () => {
     h = await createToolHarness((server, deps) => registerGenericTools(server, deps, cat));
     return (await h.listTools()).find((t) => t.name === 'jira_list_operations')?.description ?? '';
   };
+
+  it('jira_list_operations filters on every method the catalog accepts (PATCH, HEAD, OPTIONS)', async () => {
+    const patch = op({
+      id: 'PATCH /rest/api/2/thing',
+      method: 'PATCH',
+      path: '/rest/api/2/thing',
+      access: 'write',
+    });
+    await describeList(new Catalog([...catalog.search({ limit: 1000 }).operations, patch]));
+    const result = await h.call('jira_list_operations', { method: 'PATCH' });
+    expect(result.isError).toBe(false);
+    expect(JSON.parse(result.text)).toMatchObject({
+      total: 1,
+      operations: [{ operationId: 'PATCH /rest/api/2/thing' }],
+    });
+    const others = await Promise.all(
+      ['HEAD', 'OPTIONS'].map((method) => h.call('jira_list_operations', { method })),
+    );
+    expect(others.map((r) => r.isError)).toEqual([false, false]);
+  });
 
   it('jira_list_operations names the source WADLs and points to jira_describe_operation', async () => {
     const meta = {

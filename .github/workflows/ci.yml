@@ -1,7 +1,13 @@
 # Generic CI: no organisation, instance URL or credential is hard-coded.
-# Repository settings (all names are examples): secrets JIRA_READONLY_PAT and JIRA_BASE_URL
-# (a secret, so that GitHub masks the instance URL in logs; repository variables are not masked);
-# variables JIRA_CI_ENABLED ('true' to run the Jira job), SMOKE_PROJECT, JIRA_RUNNER_LABEL, PUBLISH_ARTIFACT.
+# Settings (all names are examples):
+# - environment "jira", holding the secrets JIRA_READONLY_PAT and JIRA_BASE_URL (a secret, so that
+#   GitHub masks the instance URL in logs; variables are not masked). Protect it with required
+#   reviewers and deployment branches limited to protected branches: the Jira job runs repository
+#   code with the PAT, on a runner that may sit inside the network, so a second person approves
+#   each run and unprotected branches cannot reach the secrets. Do not keep these secrets at
+#   repository level, where every workflow run of every branch can read them.
+# - repository variables JIRA_CI_ENABLED ('true' to run the Jira job), SMOKE_PROJECT,
+#   JIRA_RUNNER_LABEL, PUBLISH_ARTIFACT.
 name: ci
 
 on:
@@ -35,10 +41,15 @@ jobs:
 
   catalog-and-package:
     needs: static
-    # Skipped unless enabled (a job-level if cannot read secrets), and for pull requests from forks (secrets are not available there).
+    # Skipped unless enabled (a job-level if cannot read secrets), for pull requests from forks and
+    # for Dependabot (neither receives the secrets).
     if: >-
       vars.JIRA_CI_ENABLED == 'true' &&
+      github.actor != 'dependabot[bot]' &&
       (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+    # Secrets come from this environment only: its protection rules (required reviewers, protected
+    # branches) gate every run before any step sees the PAT.
+    environment: jira
     # GitHub-hosted only if the instance is reachable from the Internet with a public CA;
     # otherwise a self-hosted runner inside a network that reaches it and trusts its CA.
     runs-on: ${{ vars.JIRA_RUNNER_LABEL || 'ubuntu-latest' }}
@@ -73,8 +84,9 @@ jobs:
           SMOKE_PROJECT: ${{ vars.SMOKE_PROJECT }}
         run: npm run smoke
 
+      # npm run package rebuilds dist/ from scratch (prepack -> build, which cleans it) before packing.
       - name: Pack
-        run: npm pack
+        run: npm run package
 
       - name: Check the package (expected files, no PAT, no instance host)
         env:

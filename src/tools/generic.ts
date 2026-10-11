@@ -7,6 +7,7 @@ import {
   type Catalog,
 } from '../catalog/catalog.ts';
 import { API_FAMILIES, type ApiFamily } from '../catalog/types.ts';
+import { HTTP_METHODS } from '../http/jira-client.ts';
 import { DESTRUCTIVE, READ, defineTool, type ToolDeps } from './shared.ts';
 
 const scalar = z.union([z.string(), z.number(), z.boolean()]);
@@ -118,7 +119,7 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
           .enum(offered as [ApiFamily, ...ApiFamily[]])
           .optional()
           .describe(offered.map((family) => FAMILY_LABELS[family].hint).join(', ')),
-        method: z.enum(['GET', 'POST', 'PUT', 'DELETE']).optional(),
+        method: z.enum(HTTP_METHODS).optional(),
         access: z.enum(['read', 'write', 'destructive']).optional(),
         limit: z.number().int().min(1).max(100).default(20),
       }),
@@ -182,7 +183,7 @@ export function registerGenericTools(server: McpServer, deps: ToolDeps, catalog:
 
   if (!client.allowWrites) return;
 
-  // H13 — conservative annotation: this single tool may call deletions, and an operation
+  // Conservative annotation: this single tool may call deletions, and an operation
   // classified "write" may turn out to be destructive if the review missed it. Annotations are
   // only hints for MCP clients; the server enforces the write policy itself.
   defineTool(

@@ -1,33 +1,114 @@
 import { describe, expect, it } from 'vitest';
-import { containsLiteral, sensitiveLiterals, unexpectedEntries } from './package-check.ts';
+import {
+  containsLiteral,
+  missingEntries,
+  packageProblems,
+  sensitiveLiterals,
+  unexpectedEntries,
+} from './package-check.ts';
+
+const REQUIRED = [
+  'package/package.json',
+  'package/README.md',
+  'package/dist/index.js',
+  'package/dist/catalog/load.js',
+  'package/catalog/catalog.json',
+];
 
 describe('unexpectedEntries', () => {
-  it('accepts only the manifest, docs, dist and the generated catalog', () => {
+  it('accepts only the manifest, docs, licence, dist and the generated catalog', () => {
     expect(
       unexpectedEntries([
-        'package/package.json',
-        'package/README.md',
-        'package/dist/index.js',
+        ...REQUIRED,
+        'package/LICENSE',
+        'package/LICENSE.md',
         'package/dist/tools/generic.js.map',
-        'package/catalog/catalog.json',
+        'package/dist/tools/generic.d.ts',
       ]),
     ).toEqual([]);
   });
 
-  it('flags WADL, reports, env files and sources', () => {
-    expect(
-      unexpectedEntries([
-        'package/catalog/wadl/api.wadl',
-        'package/catalog/review.md',
-        'package/.env',
-        'package/src/index.ts',
-      ]),
-    ).toEqual([
+  it('flags WADL, reports, env files, sources and look-alikes of allowed files', () => {
+    const flagged = [
       'package/catalog/wadl/api.wadl',
       'package/catalog/review.md',
+      'package/catalog/lock-baseline.json',
       'package/.env',
       'package/src/index.ts',
+      'package/LICENSE.d/x',
+      'package/LICENSE-extra.txt',
+      'package/dist/index.ts',
+      'package/dist/notes.md',
+      'package/README.md.bak',
+      'other/package.json',
+    ];
+    expect(unexpectedEntries(flagged)).toEqual(flagged);
+  });
+});
+
+describe('missingEntries', () => {
+  it('requires the manifest, README, entry point, catalog loader and catalog', () => {
+    expect(missingEntries(REQUIRED)).toEqual([]);
+    expect(missingEntries([])).toEqual(REQUIRED);
+    expect(missingEntries(REQUIRED.filter((e) => e !== 'package/catalog/catalog.json'))).toEqual([
+      'package/catalog/catalog.json',
     ]);
+  });
+
+  it('does not require the catalog for a local pack (--no-catalog)', () => {
+    const local = REQUIRED.filter((e) => e !== 'package/catalog/catalog.json');
+    expect(missingEntries(local, { catalog: false })).toEqual([]);
+    expect(missingEntries(['package/package.json'], { catalog: false })).toEqual([
+      'package/README.md',
+      'package/dist/index.js',
+      'package/dist/catalog/load.js',
+    ]);
+  });
+});
+
+const files = (overrides: Record<string, string | undefined> = {}) => {
+  const base: Record<string, string | undefined> = {
+    'package/package.json': '{"name":"jira-mcp"}',
+    'package/README.md': '# jira-mcp',
+    'package/dist/index.js': '#!/usr/bin/env node\nimport "./server.js";\n',
+    'package/dist/catalog/load.js': 'export {};',
+    'package/catalog/catalog.json': '{}',
+  };
+  return Object.entries({ ...base, ...overrides }).map(([path, text]) => ({ path, text }));
+};
+
+describe('packageProblems', () => {
+  it('accepts a complete, clean package', () => {
+    expect(packageProblems(files(), { catalog: true, literals: [] })).toEqual([]);
+  });
+
+  it('reports missing, unexpected and unreadable entries', () => {
+    const list = files({ 'package/.env': 'X=1', 'package/README.md': undefined });
+    const withoutCatalog = list.filter((f) => f.path !== 'package/catalog/catalog.json');
+    expect(packageProblems(withoutCatalog, { catalog: true, literals: [] })).toEqual([
+      'missing file: package/catalog/catalog.json',
+      'unexpected file: package/.env',
+      'package/README.md: unreadable',
+    ]);
+  });
+
+  it('requires the node shebang on the entry point', () => {
+    expect(
+      packageProblems(files({ 'package/dist/index.js': 'import "./server.js";\n' }), {
+        catalog: true,
+        literals: [],
+      }),
+    ).toEqual(['package/dist/index.js: missing the "#!/usr/bin/env node" shebang']);
+  });
+
+  it('names secret findings without printing the values', () => {
+    const host = 'jira.example.com';
+    const problems = packageProblems(
+      files({ 'package/dist/catalog/load.js': `const u = "https://${host.toUpperCase()}/";` }),
+      { catalog: true, literals: [host] },
+    );
+    expect(problems).toEqual(['package/dist/catalog/load.js: sensitive environment value']);
+    expect(problems.join('\n')).not.toContain(host);
   });
 });
 

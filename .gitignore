@@ -8,9 +8,11 @@ coverage/
 .env.*
 # configuration MCP locale : peut contenir des valeurs propres au poste
 .mcp.json
+# notes locales de travail (outillage)
+.superpowers/
 
-# Inventaire des endpoints de l'instance : non versionné (mode B, décision H7).
-# Mode A (si H7 est confirmée positivement) : supprimer les cinq lignes suivantes.
+# Inventaire des endpoints de l'instance : non versionné (mode B ; les WADL contiennent l'URL de l'instance).
+# Mode A (versionner l'inventaire, si le responsable du dépôt l'autorise) : supprimer les cinq lignes suivantes.
 catalog/wadl/
 catalog/catalog.json
 catalog/last-diff.md

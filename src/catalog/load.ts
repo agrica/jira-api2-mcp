@@ -1,6 +1,7 @@
 import { readFile } from 'node:fs/promises';
 import { fileURLToPath } from 'node:url';
 import { z } from 'zod';
+import { HTTP_METHODS } from '../http/jira-client.ts';
 import { accessProblem, restPathProblem } from '../http/request-guards.ts';
 import { API_FAMILIES, type CatalogFile } from './types.ts';
 
@@ -23,7 +24,7 @@ const operationSchema = z
   .object({
     id: z.string().min(1),
     api: z.enum(API_FAMILIES),
-    method: z.enum(['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS']),
+    method: z.enum(HTTP_METHODS),
     path: z.string().check((ctx) => {
       const problem = restPathProblem(ctx.value);
       if (problem)

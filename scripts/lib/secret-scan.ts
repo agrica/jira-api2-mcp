@@ -21,3 +21,37 @@ export function findSecrets(text: string, literals: readonly string[] = []): str
   }
   return found;
 }
+
+export interface ScanResult {
+  /** Files actually read. */
+  scanned: number;
+  /** One entry per file with a problem: secret names (never values), or why it could not be read. */
+  findings: { file: string; problem: string }[];
+  /** Listed files absent from the working tree (deleted, not yet committed). */
+  skipped: string[];
+}
+
+/** Scans files one at a time; a file that cannot be read fails the scan (fail closed), unless it was deleted. */
+export async function scanFiles(
+  files: readonly string[],
+  read: (file: string) => Promise<string>,
+  literals: readonly string[],
+): Promise<ScanResult> {
+  const result: ScanResult = { scanned: 0, findings: [], skipped: [] };
+  for (const file of files) {
+    let text: string;
+    try {
+      // oxlint-disable-next-line eslint/no-await-in-loop -- sequential reads keep output order deterministic
+      text = await read(file);
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException).code ?? 'error';
+      if (code === 'ENOENT') result.skipped.push(file);
+      else result.findings.push({ file, problem: `unreadable (${code})` });
+      continue;
+    }
+    result.scanned++;
+    const hits = findSecrets(text, literals);
+    if (hits.length > 0) result.findings.push({ file, problem: hits.join(', ') });
+  }
+  return result;
+}

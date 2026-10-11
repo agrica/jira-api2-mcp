@@ -2,7 +2,7 @@
   "mcpServers": {
     "jira": {
       "command": "node",
-      "args": ["--use-system-ca", "/path/to/jira-mcp/dist/index.js"],
+      "args": ["--use-system-ca", "/chemin/vers/jira-mcp/dist/index.js"],
       "env": {
         "JIRA_BASE_URL": "https://jira.example.com",
         "JIRA_PAT": "${JIRA_PAT}",

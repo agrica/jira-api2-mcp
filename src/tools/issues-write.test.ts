@@ -1,8 +1,9 @@
 /* oxlint-disable eslint/no-await-in-loop -- some cases call tools sequentially on purpose (shared mock) */
-import { mkdir, mkdtemp, writeFile } from 'node:fs/promises';
+import { mkdir, writeFile } from 'node:fs/promises';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { afterEach, describe, expect, it } from 'vitest';
+import { tempDirs } from '../test-support/catalog-fixture.ts';
 import {
   createToolHarness,
   jsonResponse,
@@ -12,6 +13,10 @@ import {
 import { normaliseWorklogStarted, registerIssueWriteTools } from './issues-write.ts';
 
 const enabled = { allowWrites: true };
+const temp = tempDirs('jira-mcp-attach-');
+afterEach(async () => {
+  await temp.cleanup();
+});
 
 describe('issue write tools', () => {
   let h: Harness;
@@ -267,7 +272,7 @@ describe('issue write tools', () => {
 
   it('jira_add_attachment uploads the given file as multipart', async () => {
     h = await createToolHarness(registerIssueWriteTools, enabled);
-    const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-'));
+    const dir = await temp.make();
     const file = join(dir, 'notes.txt');
     await writeFile(file, 'contenu');
     h.fetchMock.mockResolvedValueOnce(jsonResponse([{ filename: 'notes.txt' }]));
@@ -288,7 +293,8 @@ describe('issue write tools', () => {
       issueKey: 'DEMO-1',
       filePath: join(tmpdir(), 'absent-xyz.txt'),
     });
-    expect(result.isError).toBe(true);
+    // The tool's own error (the file read), not a schema refusal.
+    expect(result).toEqual({ isError: true, text: expect.stringContaining('ENOENT') });
     expect(h.fetchMock).not.toHaveBeenCalled();
   });
 
@@ -498,7 +504,7 @@ describe('issue write tools (validation, descriptions, annotations)', () => {
 
   it('jira_add_attachment explains a directory, an empty file and a missing file', async () => {
     h = await createToolHarness(registerIssueWriteTools, enabled);
-    const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-'));
+    const dir = await temp.make();
     const sub = join(dir, 'folder');
     await mkdir(sub);
     const empty = join(dir, 'empty.txt');

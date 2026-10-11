@@ -16,7 +16,9 @@ import {
 } from './jira-error.ts';
 import { accessProblem, restPathProblem } from './request-guards.ts';
 
-export type HttpMethod = 'GET' | 'POST' | 'PUT' | 'DELETE' | 'PATCH' | 'HEAD' | 'OPTIONS';
+/** The single list of HTTP methods: the catalog schema and the tools derive from it. */
+export const HTTP_METHODS = ['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'HEAD', 'OPTIONS'] as const;
+export type HttpMethod = (typeof HTTP_METHODS)[number];
 export type Access = 'read' | 'write' | 'destructive';
 export type QueryScalar = string | number | boolean;
 export type QueryValue = QueryScalar | readonly QueryScalar[] | undefined;

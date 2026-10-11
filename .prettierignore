@@ -1,4 +1,9 @@
-/docs/
+/docs/superpowers/
 /graft/
 /.superpowers/
-/catalog/
+/catalog/wadl/
+/catalog/catalog.json
+/catalog/last-diff.md
+/catalog/review.md
+/catalog/lock-baseline.json
+/catalog/source-lock.json

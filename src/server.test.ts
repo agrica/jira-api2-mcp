@@ -74,6 +74,17 @@ describe('createServer', () => {
     expect(await h.listToolNames()).toEqual(expect.arrayContaining(WRITE_TOOLS));
   });
 
+  it('has the tool counts stated in README (31 tools, 11 of them writes)', async () => {
+    h = await createHarness((deps) => createServer({ ...deps, catalog }), { allowWrites: true });
+    const all = await h.listToolNames();
+    await h.close();
+    h = await createHarness((deps) => createServer({ ...deps, catalog }));
+    const readOnly = await h.listToolNames();
+    expect(all).toHaveLength(31);
+    expect(all.length - readOnly.length).toBe(WRITE_TOOLS.length);
+    expect(WRITE_TOOLS).toHaveLength(11);
+  });
+
   const xrayCases: [string, Operation['api'][], Operation[], string[], RegExp][] = [
     [
       'disabled',

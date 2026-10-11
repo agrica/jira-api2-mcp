@@ -1,3 +1,4 @@
+import { fileURLToPath } from 'node:url';
 import { Client } from '@modelcontextprotocol/client';
 import { StdioClientTransport, getDefaultEnvironment } from '@modelcontextprotocol/client/stdio';
 import { loadCatalogFile } from '../src/catalog/load.ts';
@@ -38,7 +39,8 @@ await runScript(async () => {
 
   const transport = new StdioClientTransport({
     command: process.execPath,
-    args: ['--use-system-ca', 'dist/index.js'],
+    // Resolved from this script, so that the smoke test works from any current directory.
+    args: ['--use-system-ca', fileURLToPath(new URL('../dist/index.js', import.meta.url))],
     // JIRA_ALLOW_WRITES is forced to false: the smoke test must never write.
     env: {
       ...getDefaultEnvironment(),

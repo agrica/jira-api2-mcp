@@ -314,7 +314,7 @@ export function formatReview(
     'Heuristiques de chemin : elles désignent des opérations à revoir, elles ne prouvent rien.',
     '',
     `Candidats : ${candidates.length} — En attente : ${pending.length}`,
-    `GET non revus individuellement : ${unreviewedGets} (risque résiduel H11)`,
+    `GET non revus individuellement : ${unreviewedGets} (risque résiduel accepté : classés lecture par la seule méthode HTTP)`,
     '',
   ];
   for (const category of Object.keys(CATEGORY_HELP) as ReviewCategory[]) {
