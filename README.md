@@ -402,7 +402,7 @@ Le workflow `.github/workflows/ci.yml` comprend deux jobs :
 1. Créez l'environnement `jira` (_Settings › Environments › New environment_).
 2. Déplacez-y les secrets `JIRA_READONLY_PAT` et `JIRA_BASE_URL`, puis supprimez-les des secrets du dépôt.
 3. Activez **Required reviewers** : chaque exécution du job attend l'approbation d'une autre personne avant qu'une étape ne reçoive le PAT.
-4. Dans **Deployment branches and tags**, choisissez **Protected branches only** : une branche non protégée ne peut pas atteindre les secrets. Conséquence : le job Jira d'une pull request est refusé par l'environnement (exécution en échec) ; seuls les pushes et les lancements manuels sur une branche protégée l'exécutent.
+4. Dans **Deployment branches and tags**, choisissez **Protected branches only** : une branche non protégée ne peut pas atteindre les secrets. C'est pourquoi le job Jira ne s'exécute que pour les pushes sur `main` et les lancements manuels sur une branche protégée, jamais pour une pull request : l'environnement la refuserait (exécution en échec au lieu d'être ignorée).
 
 **À configurer** (_Settings › Environments_ pour les secrets, _Settings › Secrets and variables › Actions_ pour les variables). Tous les noms sont des exemples, à adapter :
 
@@ -422,7 +422,7 @@ Le workflow `.github/workflows/ci.yml` comprend deux jobs :
 
 Placez alors le runner dans un réseau qui atteint l'instance, installez l'autorité dans son magasin système, et indiquez son label dans `JIRA_RUNNER_LABEL`. De préférence, utilisez un runner éphémère, ou réservez son groupe de runners à ce dépôt et à ce workflow : son espace de travail persiste sinon d'un job à l'autre.
 
-Si `JIRA_CI_ENABLED` ne vaut pas `true`, le job Jira est ignoré ; il l'est aussi pour les pull requests venant d'un fork et pour Dependabot, qui ne reçoivent pas les secrets.
+Si `JIRA_CI_ENABLED` ne vaut pas `true`, le job Jira est ignoré ; il l'est aussi pour toutes les pull requests et pour Dependabot. Une pull request n'exécute que le job `static`, sans secret.
 
 **Paquet.** Le job crée le paquet avec `npm run package` (recompilation complète de `dist/`), puis `scripts/check-package.ts` vérifie son contenu : fichiers attendus présents (`package.json`, `README.md`, `dist/index.js` avec sa ligne `#!/usr/bin/env node`, `dist/catalog/load.js`, `catalog/catalog.json`), aucun fichier hors liste, ni PAT, ni nom d'hôte de l'instance.
 

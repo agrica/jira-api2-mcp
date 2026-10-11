@@ -41,12 +41,13 @@ jobs:
 
   catalog-and-package:
     needs: static
-    # Skipped unless enabled (a job-level if cannot read secrets), for pull requests from forks and
-    # for Dependabot (neither receives the secrets).
+    # Runs only for pushes to main and manual runs, when enabled (a job-level if cannot read secrets).
+    # Never for pull requests: the "jira" environment is limited to protected branches, so a pull
+    # request run would be refused (failed) instead of skipped. Not for Dependabot either.
     if: >-
       vars.JIRA_CI_ENABLED == 'true' &&
       github.actor != 'dependabot[bot]' &&
-      (github.event_name != 'pull_request' || github.event.pull_request.head.repo.full_name == github.repository)
+      github.event_name != 'pull_request'
     # Secrets come from this environment only: its protection rules (required reviewers, protected
     # branches) gate every run before any step sees the PAT.
     environment: jira
