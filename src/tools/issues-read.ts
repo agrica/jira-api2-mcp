@@ -64,7 +64,7 @@ export function registerIssueReadTools(server: McpServer, deps: ToolDeps): void 
         'Search Jira issues with JQL (Jira Server/Data Center 8.x, API v2). Returns startAt, maxResults, total and issues; maxResults 0 returns only the total. Example: project = DEMO AND statusCategory != Done ORDER BY created DESC',
       inputSchema: z.object({
         jql: z.string().min(1),
-        fields: issueFieldsSchema.default([...DEFAULT_ISSUE_FIELDS]),
+        fields: issueFieldsSchema('the default list').default([...DEFAULT_ISSUE_FIELDS]),
         expand: z
           .union([z.string(), expandSchema])
           .optional()
@@ -99,7 +99,7 @@ export function registerIssueReadTools(server: McpServer, deps: ToolDeps): void 
       description: 'Get one issue by key or id. Restrict "fields" to keep the answer small.',
       inputSchema: z.object({
         issueKey: issueKeySchema,
-        fields: issueFieldsSchema.optional(),
+        fields: issueFieldsSchema('all fields (large)').optional(),
         expand: expandSchema
           .optional()
           .describe('e.g. ["renderedFields","changelog","transitions"]'),

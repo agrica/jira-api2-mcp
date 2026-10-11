@@ -227,3 +227,24 @@ describe('issue read tools (validation, hints, errors)', () => {
     expect(tools.every((t) => t.annotations?.readOnlyHint === true)).toBe(true);
   });
 });
+
+describe('fields parameter wording', () => {
+  let h: Harness;
+  afterEach(async () => {
+    await h.close();
+  });
+
+  it('says what omitting fields returns, per tool', async () => {
+    h = await createToolHarness(registerIssueReadTools);
+    const tools = await h.listTools();
+    const fieldsOf = (name: string) => {
+      const props = tools.find((t) => t.name === name)?.inputSchema?.properties ?? {};
+      return (props.fields as { description?: string } | undefined)?.description ?? '';
+    };
+    expect(fieldsOf('jira_search_issues')).toContain('Omit for the default list');
+    expect(fieldsOf('jira_get_issue')).toContain('Omit for all fields');
+    expect(fieldsOf('jira_get_issue')).not.toContain('default list');
+    const empty = await h.call('jira_get_issue', { issueKey: 'DEMO-1', fields: [] });
+    expect(empty.text).not.toContain('default list');
+  });
+});

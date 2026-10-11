@@ -9,6 +9,7 @@ import {
   issueFieldsSchema,
   issueKeySchema,
   join,
+  maxResultsSchema,
   readGet,
   startAtSchema,
   type ToolDeps,
@@ -71,13 +72,14 @@ export function registerAgileTools(server: McpServer, deps: ToolDeps): void {
     'jira_get_sprint_issues',
     {
       title: 'Issues of a sprint',
-      description: 'Issues in a sprint, optionally filtered by JQL. Pages hold at most 50 issues.',
+      description:
+        'Issues in a sprint, optionally filtered by JQL. Returns startAt, maxResults, total and issues.',
       inputSchema: z.object({
         sprintId: idSchema,
         jql: z.string().optional(),
-        fields: issueFieldsSchema.default([...DEFAULT_ISSUE_FIELDS]),
+        fields: issueFieldsSchema('the default list').default([...DEFAULT_ISSUE_FIELDS]),
         startAt: startAtSchema,
-        maxResults: agileMaxResultsSchema(50),
+        maxResults: maxResultsSchema(50),
       }),
       annotations: READ,
     },

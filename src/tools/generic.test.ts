@@ -290,3 +290,31 @@ describe('generic catalog tools (descriptions, binary bodies)', () => {
     expect(result.text).not.toContain('PNG');
   });
 });
+
+describe('binary detection', () => {
+  let h: Harness;
+  afterEach(async () => {
+    await h.close();
+  });
+
+  const readText = async (body: string) => {
+    h = await createToolHarness((server, deps) => registerGenericTools(server, deps, catalog));
+    h.fetchMock.mockResolvedValueOnce(
+      new Response(body, { headers: { 'content-type': 'text/plain' } }),
+    );
+    return h.call('jira_call_read_operation', {
+      operationId: 'GET /rest/api/2/issue/{issueIdOrKey}/comment',
+      pathParams: { issueIdOrKey: 'DEMO-1' },
+    });
+  };
+
+  it('lets a text with a few replacement characters through', async () => {
+    const text = `Compte rendu de la r\uFFFDunion du jour. ${'Ligne de texte ordinaire. '.repeat(20)}Fin.`;
+    expect(await readText(text)).toEqual({ isError: false, text });
+  });
+
+  it('treats a body dense in replacement characters as binary', async () => {
+    const result = await readText('ab\uFFFDcd\uFFFD'.repeat(50));
+    expect(result.text).toContain('binary');
+  });
+});

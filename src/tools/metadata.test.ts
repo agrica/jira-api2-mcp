@@ -129,6 +129,8 @@ describe('metadata tools (filters, annotations, errors)', () => {
     const tool = (await h.listTools()).find((t) => t.name === 'jira_list_issue_link_types');
     expect(tool?.description).toContain('inward');
     expect(tool?.description).toContain('outward');
+    expect(tool?.description).toContain('direction: see jira_link_issues');
+    expect(tool?.description).not.toContain('applies to');
   });
 
   it('every tool is annotated read-only', async () => {

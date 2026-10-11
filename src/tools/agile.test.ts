@@ -57,7 +57,7 @@ describe('agile tools (paging, fields, annotations, errors)', () => {
   it('bound maxResults to 50, the Agile 1.0 page cap, and say so', async () => {
     h = await createToolHarness(registerAgileTools);
     const tools = await h.listTools();
-    for (const name of ['jira_list_boards', 'jira_list_sprints', 'jira_get_sprint_issues']) {
+    for (const name of ['jira_list_boards', 'jira_list_sprints']) {
       const schema = tools.find((t) => t.name === name)?.inputSchema?.properties?.maxResults as
         | { maximum?: number; description?: string }
         | undefined;
@@ -121,5 +121,46 @@ describe('agile tools (paging, fields, annotations, errors)', () => {
     expect(
       await h.call('jira_move_issues_to_sprint', { sprintId: 3, issueKeys: many.slice(0, 50) }),
     ).toEqual({ isError: false, text: 'OK (no content)' });
+  });
+});
+
+describe('jira_get_sprint_issues paging and fields', () => {
+  let h: Harness;
+  afterEach(async () => {
+    await h.close();
+  });
+
+  it('allows up to 100 per page (a search, not an Agile list) and documents the default fields', async () => {
+    h = await createToolHarness(registerAgileTools);
+    const tool = (await h.listTools()).find((t) => t.name === 'jira_get_sprint_issues');
+    const props = tool?.inputSchema?.properties as Record<
+      string,
+      { maximum?: number; description?: string }
+    >;
+    expect(props.maxResults?.maximum).toBe(100);
+    expect(props.fields?.description).toContain('Omit for the default list');
+    expect((await h.call('jira_get_sprint_issues', { sprintId: 1, maxResults: 101 })).isError).toBe(
+      true,
+    );
+    h.fetchMock.mockResolvedValueOnce(jsonResponse({ issues: [] }));
+    expect((await h.call('jira_get_sprint_issues', { sprintId: 1, maxResults: 100 })).isError).toBe(
+      false,
+    );
+    expect(h.request().url.searchParams.get('maxResults')).toBe('100');
+  });
+
+  it('boards and sprints say Jira Agile returns at most 50 per page', async () => {
+    h = await createToolHarness(registerAgileTools);
+    const tools = await h.listTools();
+    for (const name of ['jira_list_boards', 'jira_list_sprints']) {
+      const props = tools.find((t) => t.name === name)?.inputSchema?.properties as Record<
+        string,
+        { description?: string }
+      >;
+      expect({ name, description: props.maxResults?.description }).toMatchObject({
+        name,
+        description: expect.stringContaining('Jira Agile returns at most 50 per page'),
+      });
+    }
   });
 });

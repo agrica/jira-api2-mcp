@@ -476,8 +476,24 @@ describe('issue write tools (validation, descriptions, annotations)', () => {
     const tools = new Map((await h.listTools()).map((t) => [t.name, t.description ?? '']));
     const link = tools.get('jira_link_issues') ?? '';
     expect(link).toContain('jira_list_issue_link_types');
-    expect(link).toContain('outwardIssue=DEMO-1, inwardIssue=DEMO-2');
+    expect(link).toContain('not guaranteed');
+    expect(link).toContain('jira_get_issue (fields ["issuelinks"])');
+    expect(link).toContain('DELETE /rest/api/2/issueLink/{linkId}');
     expect(tools.get('jira_create_issue')).toContain('parent');
+    const props = (await h.listTools()).find((t) => t.name === 'jira_link_issues')?.inputSchema
+      ?.properties as Record<string, { description?: string }>;
+    for (const name of ['inwardIssue', 'outwardIssue']) {
+      expect({ name, description: props[name]?.description }).not.toMatchObject({
+        description: expect.stringMatching(/block/i),
+      });
+    }
+  });
+
+  it('jira_add_worklog says a time without an offset is refused', async () => {
+    h = await createToolHarness(registerIssueWriteTools, enabled);
+    const props = (await h.listTools()).find((t) => t.name === 'jira_add_worklog')?.inputSchema
+      ?.properties as Record<string, { description?: string }>;
+    expect(props.started?.description).toContain('A time without an offset is refused');
   });
 
   it('jira_add_attachment explains a directory, an empty file and a missing file', async () => {

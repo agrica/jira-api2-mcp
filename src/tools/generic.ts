@@ -50,13 +50,26 @@ export function describeCoverage(catalog: Catalog): string {
   return notes.length > 0 ? `${covered} (${notes.join('; ')})` : covered;
 }
 
+const BINARY_SAMPLE = 2048;
+const BINARY_REPLACEMENT_RATIO = 0.05;
+
 /**
- * A read operation may return a file (attachment content, avatar…). The client decodes non-JSON bodies
- * as text: binary bytes become NUL or U+FFFD characters, useless to the model. Return a note instead.
+ * Binary bytes decoded as UTF-8 text: a NUL, or many U+FFFD in the first characters. A text in another
+ * encoding (e.g. Windows-1252) has only a few U+FFFD, for its accented letters, and stays text.
+ */
+function looksBinary(text: string): boolean {
+  if (text.includes('\u0000')) return true;
+  const sample = text.slice(0, BINARY_SAMPLE);
+  const replacements = sample.split('\uFFFD').length - 1;
+  return replacements > sample.length * BINARY_REPLACEMENT_RATIO;
+}
+
+/**
+ * A read operation may return a file (attachment content, avatar...). The client decodes non-JSON
+ * bodies as text, useless to the model when the bytes are binary. Return a note instead.
  */
 function withoutBinary(data: unknown): unknown {
-  if (typeof data !== 'string' || !(data.includes('\u0000') || data.includes('\uFFFD')))
-    return data;
+  if (typeof data !== 'string' || !looksBinary(data)) return data;
   return {
     binary: true,
     characters: data.length,

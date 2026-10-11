@@ -157,7 +157,7 @@ export function registerMetadataTools(server: McpServer, deps: ToolDeps): void {
     {
       title: 'Issue link types',
       description:
-        'Issue link types usable with jira_link_issues: id, name, and the outward text (applies to outwardIssue, e.g. "blocks") and inward text (applies to inwardIssue, e.g. "is blocked by").',
+        'Issue link types usable with jira_link_issues: id, name, outward text (e.g. "blocks") and inward text (e.g. "is blocked by"). For the link direction: see jira_link_issues.',
       inputSchema: noInput,
       annotations: READ,
     },

@@ -211,7 +211,7 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
           .refine((value) => normaliseWorklogStarted(value) !== undefined, STARTED_MESSAGE)
           .optional()
           .describe(
-            'When the work started, yyyy-MM-ddTHH:mm:ss.SSS±HHMM (with the time zone offset)',
+            'When the work started, yyyy-MM-ddTHH:mm:ss.SSS±HHMM; "Z" or "±HH:MM" is converted. A time without an offset is refused.',
           ),
         comment: z.string().optional(),
         adjustEstimate: z
@@ -250,14 +250,14 @@ export function registerIssueWriteTools(server: McpServer, deps: ToolDeps): void
     {
       title: 'Link two issues',
       description:
-        'Create a link between two issues. linkType is the link type name, e.g. "Relates", "Blocks", "Duplicate"; jira_list_issue_link_types gives each type with its outward and inward texts. Direction: outwardIssue is the issue the outward text applies to, inwardIssue the one on the inward side. Example with "Blocks" (outward "blocks", inward "is blocked by"): to record "DEMO-1 blocks DEMO-2", send outwardIssue=DEMO-1, inwardIssue=DEMO-2. Keys or numeric ids.',
+        'Create a link between two issues. linkType is the link type name (e.g. "Relates", "Blocks", "Duplicate"); jira_list_issue_link_types gives the outward and inward texts of each type. Direction (counter-intuitive, not guaranteed): Jira most likely records "inwardIssue <outward text> outwardIssue", e.g. with "Blocks" (outward "blocks"), inwardIssue=DEMO-1 and outwardIssue=DEMO-2 should give "DEMO-1 blocks DEMO-2". For a directional type, always check the result with jira_get_issue (fields ["issuelinks"]) on inwardIssue: an entry with type.outward "blocks" and outwardIssue DEMO-2 confirms it. If it is reversed, delete that link (jira_call_write_operation, DELETE /rest/api/2/issueLink/{linkId}, linkId = the id of the entry) and create it again with the issues swapped. Keys or numeric ids.',
       inputSchema: z.object({
         linkType: z.string().min(1),
         inwardIssue: issueKeySchema.describe(
-          'Issue on the inward side (for "Blocks": the one that is blocked)',
+          'The "inwardIssue" of the link (see the direction note in the tool description)',
         ),
         outwardIssue: issueKeySchema.describe(
-          'Issue the outward text applies to (for "Blocks": the one that blocks)',
+          'The "outwardIssue" of the link (see the direction note in the tool description)',
         ),
         comment: z.string().optional(),
       }),
