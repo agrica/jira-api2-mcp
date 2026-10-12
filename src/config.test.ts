@@ -52,12 +52,12 @@ describe('loadConfig', () => {
       JIRA_TIMEOUT_MS: '5000',
       JIRA_MAX_RESPONSE_BYTES: '1024',
       JIRA_MAX_OUTPUT_CHARS: '2000',
-      JIRA_CATALOG_PATH: '/opt/jira-mcp/catalog.json',
+      JIRA_CATALOG_PATH: '/opt/jira8-mcp/catalog.json',
     });
     expect([config.timeoutMs, config.maxResponseBytes, config.maxOutputChars]).toEqual([
       5000, 1024, 2000,
     ]);
-    expect(config.catalogPath).toBe('/opt/jira-mcp/catalog.json');
+    expect(config.catalogPath).toBe('/opt/jira8-mcp/catalog.json');
   });
 
   it('accepts plain HTTP only with JIRA_ALLOW_INSECURE_HTTP=true', () => {

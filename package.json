@@ -1,10 +1,10 @@
 {
-  "name": "jira-mcp",
+  "name": "jira8-mcp",
   "version": "0.1.0",
   "private": true,
   "description": "Generic MCP server for Jira Server / Data Center 8.x (REST API v2)",
   "bin": {
-    "jira-mcp": "./dist/index.js"
+    "jira8-mcp": "./dist/index.js"
   },
   "files": [
     "dist",

@@ -17,7 +17,7 @@ export interface MainDeps {
   createServer?: (deps: ServerDeps) => McpServer;
 }
 
-const PREFIX = '[jira-mcp]';
+const PREFIX = '[jira8-mcp]';
 const message = (error: unknown) => (error instanceof Error ? error.message : String(error));
 
 /**

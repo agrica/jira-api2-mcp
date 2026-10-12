@@ -42,7 +42,7 @@ async function checkTarball(tarball: string): Promise<string[]> {
   } catch {
     return ['cannot be listed (missing file or not a gzip tarball)'];
   }
-  const dir = await mkdtemp(join(tmpdir(), 'jira-mcp-pack-'));
+  const dir = await mkdtemp(join(tmpdir(), 'jira8-mcp-pack-'));
   try {
     execFileSync('tar', ['-xzf', tarball, '-C', dir]);
     const files: PackedFile[] = [];

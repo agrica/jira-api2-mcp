@@ -1,4 +1,4 @@
-# Livraison jira-mcp <version> — <AAAA-MM-JJ>
+# Livraison jira8-mcp <version> — <AAAA-MM-JJ>
 
 | Élément                        | Valeur                                                                                            |
 | ------------------------------ | ------------------------------------------------------------------------------------------------- |

@@ -30,7 +30,7 @@ const valid = {
   ],
 };
 
-const temp = tempDirs('jira-mcp-catalog-');
+const temp = tempDirs('jira8-mcp-catalog-');
 afterEach(async () => {
   await temp.cleanup();
 });
