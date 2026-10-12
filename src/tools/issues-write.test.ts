@@ -13,7 +13,7 @@ import {
 import { normaliseWorklogStarted, registerIssueWriteTools } from './issues-write.ts';
 
 const enabled = { allowWrites: true };
-const temp = tempDirs('jira8-mcp-attach-');
+const temp = tempDirs('jira-api2-mcp-attach-');
 afterEach(async () => {
   await temp.cleanup();
 });

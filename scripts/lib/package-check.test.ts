@@ -68,8 +68,8 @@ describe('missingEntries', () => {
 
 const files = (overrides: Record<string, string | undefined> = {}) => {
   const base: Record<string, string | undefined> = {
-    'package/package.json': '{"name":"jira8-mcp"}',
-    'package/README.md': '# jira8-mcp',
+    'package/package.json': '{"name":"jira-api2-mcp"}',
+    'package/README.md': '# jira-api2-mcp',
     'package/dist/index.js': '#!/usr/bin/env node\nimport "./server.js";\n',
     'package/dist/catalog/load.js': 'export {};',
     'package/catalog/catalog.json': '{}',
@@ -129,7 +129,10 @@ describe('sensitiveLiterals', () => {
     expect(sensitiveLiterals({ JIRA_BASE_URL: 'https://jira/' })).toEqual([]);
     expect(sensitiveLiterals({ JIRA_BASE_URL: 'https://jira:8443/' })).toEqual(['jira:8443']);
     expect(
-      containsLiteral('Jira and jira8-mcp', sensitiveLiterals({ JIRA_BASE_URL: 'https://jira' })),
+      containsLiteral(
+        'Jira and jira-api2-mcp',
+        sensitiveLiterals({ JIRA_BASE_URL: 'https://jira' }),
+      ),
     ).toBe(false);
   });
 

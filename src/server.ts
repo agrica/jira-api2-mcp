@@ -27,7 +27,7 @@ function instructions(deps: ServerDeps): string {
 
 export function createServer(deps: ServerDeps): McpServer {
   const server = new McpServer(
-    { name: 'jira8-mcp', version: VERSION },
+    { name: 'jira-api2-mcp', version: VERSION },
     { instructions: instructions(deps) },
   );
   registerMetadataTools(server, deps);

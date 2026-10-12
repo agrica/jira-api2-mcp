@@ -16,7 +16,7 @@ const ENTRY = fileURLToPath(new URL('./index.ts', import.meta.url));
 // Fictitious values only; built by concatenation so that secrets:scan does not flag this file.
 const PAT = ['fakepat', 'value', '0002'].join('');
 const BASE_URL = 'https://jira.example.com';
-const temp = tempDirs('jira8-mcp-entry-');
+const temp = tempDirs('jira-api2-mcp-entry-');
 
 /** The parent environment without any Jira setting or coverage hook, plus the given values. */
 function childEnv(values: Record<string, string>): NodeJS.ProcessEnv {
@@ -107,7 +107,7 @@ describe('node src/index.ts', () => {
     expect(lines.length).toBeGreaterThanOrEqual(2);
     for (const line of lines) expect(() => deserializeMessage(line)).not.toThrow();
     const stderr = proc.stderr.join('');
-    expect(stderr).toMatch(/^\[jira8-mcp\] ready \(read-only; .*catalog: 1 operations/m);
+    expect(stderr).toMatch(/^\[jira-api2-mcp\] ready \(read-only; .*catalog: 1 operations/m);
     expect(stderr).not.toContain(PAT);
     expect(stderr).not.toContain('jira.example.com');
     // stdin closed: the server exits on its own.
@@ -120,7 +120,7 @@ describe('node src/index.ts', () => {
     expect(await proc.exited).toBe(1);
     expect(proc.stdout.join('')).toBe('');
     const stderr = proc.stderr.join('');
-    expect(stderr).toMatch(/^\[jira8-mcp\] Invalid configuration — JIRA_PAT[^\n]*\n$/);
+    expect(stderr).toMatch(/^\[jira-api2-mcp\] Invalid configuration — JIRA_PAT[^\n]*\n$/);
     expect(stderr).not.toContain('two words');
     expect(stderr).not.toContain('jira.example.com');
   });
@@ -132,7 +132,9 @@ describe('node src/index.ts', () => {
     expect(await proc.exited).toBe(1);
     expect(proc.stdout.join('')).toBe('');
     const stderr = proc.stderr.join('');
-    expect(stderr).toMatch(/^\[jira8-mcp\] Operation catalog not found[^\n]*npm run catalog:build/);
+    expect(stderr).toMatch(
+      /^\[jira-api2-mcp\] Operation catalog not found[^\n]*npm run catalog:build/,
+    );
     expect(stderr).not.toMatch(/\n\s+at /);
     expect(stderr).not.toContain(PAT);
   });

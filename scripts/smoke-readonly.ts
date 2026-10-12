@@ -57,7 +57,7 @@ await runScript(async () => {
     },
     stderr: 'inherit',
   });
-  const client = new Client({ name: 'jira8-mcp-smoke', version: '0.0.0' });
+  const client = new Client({ name: 'jira-api2-mcp-smoke', version: '0.0.0' });
   await client.connect(transport);
   try {
     const WRITE_TOOLS = [

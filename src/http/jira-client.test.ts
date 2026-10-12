@@ -1143,7 +1143,7 @@ describe('JiraClient.request — host redaction on label boundaries (final revie
       maxRetries: 0,
     });
     singleFetch.mockResolvedValueOnce(
-      new Response(JSON.stringify({ errorMessages: ['Jira says jira8-mcp failed'] }), {
+      new Response(JSON.stringify({ errorMessages: ['Jira says jira-api2-mcp failed'] }), {
         status: 400,
         headers: { 'content-type': 'application/json' },
       }),
@@ -1151,6 +1151,6 @@ describe('JiraClient.request — host redaction on label boundaries (final revie
     const text = await single
       .request({ method: 'GET', path: '/rest/api/2/myself', access: 'read' })
       .catch((e: unknown) => (e as Error).message);
-    expect(text).toContain('Jira says jira8-mcp failed');
+    expect(text).toContain('Jira says jira-api2-mcp failed');
   });
 });

@@ -5,7 +5,7 @@ import { main, type MainDeps } from './main.ts';
 // Fictitious values only; built by concatenation so that secrets:scan does not flag this file.
 const PAT = ['fakepat', 'value', '0001'].join('');
 const BASE_URL = 'https://jira.example.com';
-const temp = tempDirs('jira8-mcp-main-');
+const temp = tempDirs('jira-api2-mcp-main-');
 
 afterEach(async () => {
   await temp.cleanup();
@@ -34,7 +34,7 @@ describe('main', () => {
     expect(code).toBe(0);
     expect(serve).toHaveBeenCalledOnce();
     expect(lines).toEqual([
-      '[jira8-mcp] ready (read-only; Xray disabled; catalog: 1 operations from Jira 8.20.0, WADL fetched 2026-01-01T00:00:00.000Z)',
+      '[jira-api2-mcp] ready (read-only; Xray disabled; catalog: 1 operations from Jira 8.20.0, WADL fetched 2026-01-01T00:00:00.000Z)',
     ]);
     const [factory] = serve.mock.calls[0]!;
     expect(factory()).toBeDefined();
@@ -49,7 +49,7 @@ describe('main', () => {
     const { code, lines, serve } = await run({ JIRA_BASE_URL: BASE_URL });
     expect(code).toBe(1);
     expect(lines).toEqual([
-      expect.stringMatching(/^\[jira8-mcp\] Invalid configuration — JIRA_PAT/),
+      expect.stringMatching(/^\[jira-api2-mcp\] Invalid configuration — JIRA_PAT/),
     ]);
     expect(serve).not.toHaveBeenCalled();
   });
@@ -62,7 +62,9 @@ describe('main', () => {
       JIRA_CATALOG_PATH: `${dir}/absent.json`,
     });
     expect(code).toBe(1);
-    expect(lines).toEqual([expect.stringMatching(/^\[jira8-mcp\] Operation catalog not found/)]);
+    expect(lines).toEqual([
+      expect.stringMatching(/^\[jira-api2-mcp\] Operation catalog not found/),
+    ]);
     expect(serve).not.toHaveBeenCalled();
   });
 
@@ -74,9 +76,9 @@ describe('main', () => {
       JIRA_ENABLE_XRAY: 'true',
     });
     expect(code).toBe(0);
-    expect(lines[0]).toMatch(/^\[jira8-mcp\] WARNING: Plain HTTP/);
+    expect(lines[0]).toMatch(/^\[jira-api2-mcp\] WARNING: Plain HTTP/);
     expect(lines[1]).toMatch(
-      /^\[jira8-mcp\] WARNING: JIRA_ENABLE_XRAY=true but the catalog has no Xray/,
+      /^\[jira-api2-mcp\] WARNING: JIRA_ENABLE_XRAY=true but the catalog has no Xray/,
     );
     expect(lines[2]).toContain('Xray enabled');
   });
@@ -88,7 +90,7 @@ describe('main', () => {
       },
     });
     expect(code).toBe(1);
-    expect(lines).toEqual(['[jira8-mcp] factory broken']);
+    expect(lines).toEqual(['[jira-api2-mcp] factory broken']);
     expect(serve).not.toHaveBeenCalled();
   });
 
@@ -99,8 +101,8 @@ describe('main', () => {
     onerror(error);
     error.stack = undefined;
     onerror(error);
-    expect(lines.at(-2)).toMatch(/^\[jira8-mcp\] Error: pipe closed\n\s+at /);
-    expect(lines.at(-1)).toBe('[jira8-mcp] pipe closed');
+    expect(lines.at(-2)).toMatch(/^\[jira-api2-mcp\] Error: pipe closed\n\s+at /);
+    expect(lines.at(-1)).toBe('[jira-api2-mcp] pipe closed');
   });
 
   it('reports non-Error failures as text', async () => {
@@ -111,6 +113,6 @@ describe('main', () => {
       },
     });
     expect(code).toBe(1);
-    expect(lines).toEqual(['[jira8-mcp] plain text']);
+    expect(lines).toEqual(['[jira-api2-mcp] plain text']);
   });
 });

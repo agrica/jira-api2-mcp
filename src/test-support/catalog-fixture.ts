@@ -27,7 +27,7 @@ export const FIXTURE_CATALOG = {
 };
 
 /** Temporary directories created by a test file, removed with `cleanup()` (call it in afterEach). */
-export function tempDirs(prefix = 'jira8-mcp-test-') {
+export function tempDirs(prefix = 'jira-api2-mcp-test-') {
   const dirs: string[] = [];
   return {
     async make(): Promise<string> {

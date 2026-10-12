@@ -24,7 +24,7 @@ export function boundedPattern(literal: string): RegExp {
 
 /**
  * Pattern of an instance host name, or `undefined` for a single-label host (`https://jira`): such a
- * name is also an ordinary word ("Jira", "jira8-mcp") and is not worth hiding.
+ * name is also an ordinary word ("Jira", "jira-api2-mcp") and is not worth hiding.
  */
 export function hostPattern(hostname: string): RegExp | undefined {
   return hostname.includes('.') ? boundedPattern(hostname) : undefined;

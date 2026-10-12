@@ -139,7 +139,7 @@ describe('readCatalogJson / readLockIfAny', () => {
 
 describe('readLockIfAny — injected location', () => {
   it('returns undefined for a missing lock and refuses a corrupt one', async () => {
-    const dir = await mkdtemp(join(tmpdir(), 'jira8-mcp-lock-'));
+    const dir = await mkdtemp(join(tmpdir(), 'jira-api2-mcp-lock-'));
     const url = pathToFileURL(join(dir, 'source-lock.json'));
     await expect(readLockIfAny(url)).resolves.toBeUndefined();
     await writeFile(url, '{oops');

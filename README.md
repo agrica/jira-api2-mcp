@@ -1,4 +1,4 @@
-# jira8-mcp
+# jira-api2-mcp
 
 Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** (REST API v2).
 
@@ -51,7 +51,7 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 
   Ne désactivez jamais la vérification TLS.
 
-  La commande `jira8-mcp` (champ `bin` du paquet) ne passe pas d'option à Node : pour elle, définissez `NODE_OPTIONS=--use-system-ca` dans l'environnement, ou `NODE_EXTRA_CA_CERTS`.
+  La commande `jira-api2-mcp` (champ `bin` du paquet) ne passe pas d'option à Node : pour elle, définissez `NODE_OPTIONS=--use-system-ca` dans l'environnement, ou `NODE_EXTRA_CA_CERTS`.
 
 ## Installation
 
@@ -61,10 +61,10 @@ Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`).
 
 Si le dépôt publie le paquet (voir « CI »), il contient déjà `dist/` et le catalogue de votre instance.
 
-1. Téléchargez l'artefact `jira8-mcp-package` depuis l'exécution du workflow, ou avec `gh run download <run-id> -n jira8-mcp-package`. Il contient `jira8-mcp-<version>.tgz`.
+1. Téléchargez l'artefact `jira-api2-mcp-package` depuis l'exécution du workflow, ou avec `gh run download <run-id> -n jira-api2-mcp-package`. Il contient `jira-api2-mcp-<version>.tgz`.
 2. Décompressez le paquet et installez ses dépendances de production :
    ```bash
-   tar -xzf jira8-mcp-<version>.tgz        # crée le dossier package/
+   tar -xzf jira-api2-mcp-<version>.tgz        # crée le dossier package/
    cd package
    npm install --omit=dev
    npm audit --omit=dev
@@ -75,13 +75,13 @@ On utilise `npm install` et non `npm ci`, parce qu'un paquet produit par `npm pa
 
 ### B. Depuis une release GitHub (paquet générique)
 
-Chaque version publiée (voir « Versions et dépendances ») joint à sa release GitHub le paquet `jira8-mcp-<version>.tgz` et un fichier `SHA256SUMS.txt`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
+Chaque version publiée (voir « Versions et dépendances ») joint à sa release GitHub le paquet `jira-api2-mcp-<version>.tgz` et un fichier `SHA256SUMS.txt`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
 
-1. Téléchargez les deux fichiers depuis la page _Releases_ du dépôt, ou avec `gh release download v<version> -p 'jira8-mcp-*.tgz' -p SHA256SUMS.txt`.
+1. Téléchargez les deux fichiers depuis la page _Releases_ du dépôt, ou avec `gh release download v<version> -p 'jira-api2-mcp-*.tgz' -p SHA256SUMS.txt`.
 2. Vérifiez l'empreinte, puis installez :
    ```bash
    sha256sum -c SHA256SUMS.txt
-   tar -xzf jira8-mcp-<version>.tgz        # crée le dossier package/
+   tar -xzf jira-api2-mcp-<version>.tgz        # crée le dossier package/
    cd package
    npm install --omit=dev
    npm audit --omit=dev
@@ -95,7 +95,7 @@ Le PAT n'est utilisé qu'en lecture pour télécharger les WADL.
 **bash (Linux, macOS, Git Bash) :**
 
 ```bash
-git clone <url-du-dépôt> jira8-mcp && cd jira8-mcp
+git clone <url-du-dépôt> jira-api2-mcp && cd jira-api2-mcp
 npm ci
 export JIRA_BASE_URL=https://jira.example.com   # exemple fictif : URL de votre instance
 read -rs JIRA_PAT && export JIRA_PAT            # saisie masquée, rien dans l'historique
@@ -108,7 +108,7 @@ npm run build              # compile dist/
 **PowerShell (Windows) :**
 
 ```powershell
-git clone <url-du-dépôt> jira8-mcp; cd jira8-mcp
+git clone <url-du-dépôt> jira-api2-mcp; cd jira-api2-mcp
 npm ci
 $env:JIRA_BASE_URL = 'https://jira.example.com'   # exemple fictif
 $pat = Read-Host -MaskInput 'PAT'; $env:JIRA_PAT = $pat; Remove-Variable pat
@@ -167,7 +167,7 @@ Valeurs booléennes acceptées : `true`, `false`, `1`, `0`. Les valeurs numériq
 **Journal de démarrage** (sur stderr, sans l'URL de l'instance) :
 
 ```text
-[jira8-mcp] ready (read-only; Xray disabled; catalog: 812 operations from Jira 8.20.0, WADL fetched 2026-10-11T08:00:00.000Z)
+[jira-api2-mcp] ready (read-only; Xray disabled; catalog: 812 operations from Jira 8.20.0, WADL fetched 2026-10-11T08:00:00.000Z)
 ```
 
 ## Brancher le serveur sur un client MCP
@@ -175,7 +175,7 @@ Valeurs booléennes acceptées : `true`, `false`, `1`, `0`. Les valeurs numériq
 Le serveur parle MCP sur **stdin/stdout** ; il se lance avec :
 
 ```bash
-node --use-system-ca /chemin/vers/jira8-mcp/dist/index.js
+node --use-system-ca /chemin/vers/jira-api2-mcp/dist/index.js
 ```
 
 Ne mettez **jamais le PAT en clair** dans un fichier de configuration versionné ou dans une ligne de commande (historique du shell) : passez-le par l'environnement.
@@ -189,7 +189,7 @@ Ne mettez **jamais le PAT en clair** dans un fichier de configuration versionné
      "mcpServers": {
        "jira": {
          "command": "node",
-         "args": ["--use-system-ca", "/chemin/vers/jira8-mcp/dist/index.js"],
+         "args": ["--use-system-ca", "/chemin/vers/jira-api2-mcp/dist/index.js"],
          "env": {
            "JIRA_BASE_URL": "https://jira.example.com",
            "JIRA_PAT": "${JIRA_PAT}",
@@ -203,7 +203,7 @@ Ne mettez **jamais le PAT en clair** dans un fichier de configuration versionné
    `${JIRA_PAT}` est remplacé par Claude Code à partir de votre environnement.
 3. Définissez `JIRA_PAT` dans l'environnement qui lance Claude Code, puis vérifiez avec `/mcp` que le serveur `jira` est connecté.
 
-Sous Windows, utilisez un chemin avec des barres obliques ou des antislashs doublés, par exemple `"C:/outils/jira8-mcp/dist/index.js"`.
+Sous Windows, utilisez un chemin avec des barres obliques ou des antislashs doublés, par exemple `"C:/outils/jira-api2-mcp/dist/index.js"`.
 
 ### Claude Code (ligne de commande)
 
@@ -211,7 +211,7 @@ Sous Windows, utilisez un chemin avec des barres obliques ou des antislashs doub
 claude mcp add jira \
   -e JIRA_BASE_URL=https://jira.example.com \
   -e JIRA_ALLOW_WRITES=false \
-  -- node --use-system-ca /chemin/vers/jira8-mcp/dist/index.js
+  -- node --use-system-ca /chemin/vers/jira-api2-mcp/dist/index.js
 ```
 
 Le PAT n'est pas passé ici : il est hérité de l'environnement qui lance Claude Code.
@@ -470,7 +470,7 @@ Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec le droit
 | `npm run dev`                                      | lance le serveur depuis les sources, avec rechargement                                |
 | `npm run build` / `npm start`                      | vide puis recompile `dist/` / lance le serveur compilé                                |
 | `npm run clean`                                    | supprime `dist/`                                                                      |
-| `npm run package`                                  | recompile `dist/` puis crée le paquet `jira8-mcp-<version>.tgz` (voir ci-dessous)     |
+| `npm run package`                                  | recompile `dist/` puis crée le paquet `jira-api2-mcp-<version>.tgz` (voir ci-dessous) |
 | `npm test` / `npm run test:watch`                  | tests (sans Jira ni catalogue généré), une fois / en continu                          |
 | `npm run coverage`                                 | tests avec couverture (seuils : 90 % lignes, fonctions, instructions ; 85 % branches) |
 | `npm run format` / `npm run format:check`          | met en forme / vérifie la mise en forme (oxfmt)                                       |
@@ -481,7 +481,7 @@ Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec le droit
 | `npm run smoke`                                    | test de fumée réel en lecture seule (après `npm run build` ; `SMOKE_PROJECT` requis)  |
 | `npm run catalog:fetch`, `build`, `check`, `drift` | catalogue : voir « Installation » et « Catalogue et revue »                           |
 
-**Paquet local.** `.npmrc` contient `ignore-scripts=true` (aucun script de dépendance ne s'exécute à l'installation) ; un simple `npm pack` saute donc le script `prepack` et emballerait `dist/` tel quel, éventuellement périmé. Utilisez `npm run package`, qui lance `npm pack --ignore-scripts=false` : `prepack` recompile alors `dist/` à partir de zéro. Sans catalogue généré, contrôlez le paquet avec `node scripts/check-package.ts --no-catalog jira8-mcp-<version>.tgz` (la CI, elle, exige le catalogue).
+**Paquet local.** `.npmrc` contient `ignore-scripts=true` (aucun script de dépendance ne s'exécute à l'installation) ; un simple `npm pack` saute donc le script `prepack` et emballerait `dist/` tel quel, éventuellement périmé. Utilisez `npm run package`, qui lance `npm pack --ignore-scripts=false` : `prepack` recompile alors `dist/` à partir de zéro. Sans catalogue généré, contrôlez le paquet avec `node scripts/check-package.ts --no-catalog jira-api2-mcp-<version>.tgz` (la CI, elle, exige le catalogue).
 
 **Règle d'or :** stdout est le canal MCP. N'utilisez jamais `console.log` (oxlint le refuse).
 
