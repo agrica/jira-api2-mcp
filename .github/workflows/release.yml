@@ -1,6 +1,6 @@
 # Publishes a version when its tag (vX.Y.Z, e.g. created by `npm version`) is pushed: the package
-# goes to GitHub Packages (npm registry) as @agrica/jira-api2-mcp, then a GitHub release carries the
-# same tarball and its checksum. Both carry the generic package only: the operation catalog is
+# goes to GitHub Packages (npm registry) as @agrica/jira-api2-mcp, then a GitHub release records the
+# version with its notes and no attached file. The package is generic: the operation catalog is
 # specific to each Jira instance and is never published (generate it locally, or take the CI
 # artifact of a private repository). No Jira secret is used here.
 name: release
@@ -21,7 +21,7 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 15
     permissions:
-      contents: write # create the release and upload its assets
+      contents: write # create the release
       packages: write # publish to npm.pkg.github.com
     steps:
       - uses: actions/checkout@v4
@@ -76,9 +76,6 @@ jobs:
             exit 1
           fi
 
-      - name: Checksums
-        run: sha256sum agrica-jira-api2-mcp-*.tgz > SHA256SUMS.txt
-
       # The tarball checked above is the one published. A pre-release (tag containing "-") gets
       # the dist-tag "next", so that `npm install` keeps resolving the latest stable version.
       - name: Publish to GitHub Packages
@@ -95,5 +92,5 @@ jobs:
         run: |
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" agrica-jira-api2-mcp-*.tgz SHA256SUMS.txt \
+          gh release create "$GITHUB_REF_NAME" \
             --title "jira-api2-mcp $GITHUB_REF_NAME" --generate-notes --verify-tag $prerelease

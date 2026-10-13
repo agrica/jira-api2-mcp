@@ -55,7 +55,7 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 
 ## Installation
 
-Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Quatre façons d'obtenir un serveur prêt à l'emploi :
+Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Trois façons d'obtenir un serveur prêt à l'emploi :
 
 ### A. Depuis le paquet produit par la CI
 
@@ -73,39 +73,27 @@ Si le dépôt publie le paquet (voir « CI »), il contient déjà `dist/` et le
 
 On utilise `npm install` et non `npm ci`, parce qu'un paquet produit par `npm pack` ne contient pas `package-lock.json`. Les dépendances directes sont figées par version exacte dans `package.json` ; les dépendances transitives sont résolues au moment de l'installation, d'où le `npm audit`.
 
-### B. Depuis une release GitHub (paquet générique)
+### B. Depuis le registre npm de GitHub (GitHub Packages)
 
-Chaque version publiée (voir « Versions et dépendances ») joint à sa release GitHub le paquet `agrica-jira-api2-mcp-<version>.tgz` et un fichier `SHA256SUMS.txt`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
+Chaque version publiée (voir « Versions et dépendances ») est sur le registre npm de GitHub, sous le nom `@agrica/jira-api2-mcp`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
 
-1. Téléchargez les deux fichiers depuis la page _Releases_ du dépôt, ou avec `gh release download v<version> -p 'agrica-jira-api2-mcp-*.tgz' -p SHA256SUMS.txt`.
-2. Vérifiez l'empreinte, puis installez :
-   ```bash
-   sha256sum -c SHA256SUMS.txt
-   tar -xzf agrica-jira-api2-mcp-<version>.tgz # crée le dossier package/
-   cd package
-   npm install --omit=dev
-   npm audit --omit=dev
-   ```
-3. Fournissez le catalogue de votre instance : générez-le depuis les sources (méthode D, étapes `catalog:*`) puis copiez `catalog/catalog.json` dans `package/catalog/`, ou indiquez son emplacement avec `JIRA_CATALOG_PATH`.
-
-### C. Depuis GitHub Packages (registre npm)
-
-Chaque version publiée est aussi sur le registre npm de GitHub, sous le nom `@agrica/jira-api2-mcp`. C'est le même paquet **générique** que celui de la release : sans catalogue.
-
-1. GitHub Packages exige un jeton, même pour lire. Créez un _personal access token_ avec le droit `read:packages`, puis ajoutez-le à votre `~/.npmrc` **utilisateur** (jamais à un fichier versionné) :
+1. GitHub Packages exige un jeton, même pour lire un paquet. Créez un _personal access token_ avec le droit `read:packages`, puis ajoutez-le à votre `~/.npmrc` **utilisateur** (jamais à un fichier versionné) :
    ```
    @agrica:registry=https://npm.pkg.github.com
    //npm.pkg.github.com/:_authToken=VOTRE_JETON_GITHUB
    ```
-2. Installez la commande :
+2. Installez le paquet :
    ```bash
-   npm install -g @agrica/jira-api2-mcp           # ou @agrica/jira-api2-mcp@<version>
+   npm install -g @agrica/jira-api2-mcp            # dernière version stable
+   npm install -g @agrica/jira-api2-mcp@<version>  # version précise
    ```
-3. Générez le catalogue de votre instance depuis les sources (méthode D, étapes `catalog:*`) et indiquez son emplacement avec `JIRA_CATALOG_PATH`. La commande installée s'appelle `jira-api2-mcp` ; pour une autorité de certification privée, définissez `NODE_OPTIONS=--use-system-ca` (voir « Prérequis »).
+   Les pré-versions (`1.2.0-rc.1`, par exemple) sont publiées sous l'étiquette `next` : `npm install -g @agrica/jira-api2-mcp@next`.
+3. Générez le catalogue de votre instance depuis les sources (méthode C, étapes `catalog:*`) et indiquez son emplacement avec `JIRA_CATALOG_PATH`.
+4. Le serveur installé se trouve dans `$(npm root -g)/@agrica/jira-api2-mcp/dist/index.js` : c'est le chemin à donner à `node --use-system-ca` (voir « Brancher le serveur sur un client MCP »). La commande `jira-api2-mcp` est aussi disponible ; pour une autorité de certification privée, elle demande `NODE_OPTIONS=--use-system-ca` (voir « Prérequis »).
 
-Les pré-versions (`v1.2.0-rc.1`, par exemple) sont publiées sous l'étiquette `next` : `npm install -g @agrica/jira-api2-mcp@next`.
+Mettre à jour : `npm install -g @agrica/jira-api2-mcp@latest`.
 
-### D. Depuis les sources
+### C. Depuis les sources
 
 Le PAT n'est utilisé qu'en lecture pour télécharger les WADL.
 
@@ -477,9 +465,9 @@ Ces pull requests n'exécutent que le job `static` (format, lint, types, tests, 
    - relance `npm run check` ;
    - retire `"private": true` de `package.json`, crée le paquet avec `npm run package` et le contrôle (`check-package --no-catalog`, absence de catalogue) ;
    - publie ce paquet sur GitHub Packages (`@agrica/jira-api2-mcp`, étiquette `latest`, ou `next` pour une pré-version) ;
-   - publie la release GitHub avec le paquet, `SHA256SUMS.txt` et des notes générées à partir des pull requests. Un tag contenant `-` (par exemple `v1.2.0-rc.1`) produit une _pre-release_.
+   - crée la release GitHub, avec des notes générées à partir des pull requests et sans fichier joint : le paquet s'installe depuis GitHub Packages (méthode B). Un tag contenant `-` (par exemple `v1.2.0-rc.1`) produit une _pre-release_.
 
-Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec les droits `contents: write` et `packages: write`. Ni la release ni le paquet publié ne contiennent **jamais** de catalogue ou d'information sur une instance.
+Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec les droits `contents: write` et `packages: write`. Le paquet publié ne contient **jamais** de catalogue ou d'information sur une instance.
 
 `package.json` reste marqué `"private": true` dans le dépôt : un `npm publish` lancé depuis un poste, où un catalogue a pu être généré, est refusé. Seul le workflow `release`, qui ne génère jamais de catalogue, lève cette protection.
 
