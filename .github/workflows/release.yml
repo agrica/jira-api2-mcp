@@ -1,7 +1,8 @@
-# Publishes a GitHub release when a version tag (vX.Y.Z, e.g. created by `npm version`) is pushed.
-# The release carries the generic package only: the operation catalog is specific to each Jira
-# instance and is never published (generate it locally, or take the CI artifact of a private
-# repository). No Jira secret is used here.
+# Publishes a version when its tag (vX.Y.Z, e.g. created by `npm version`) is pushed: the package
+# goes to GitHub Packages (npm registry) as @agrica/jira-api2-mcp, then a GitHub release carries the
+# same tarball and its checksum. Both carry the generic package only: the operation catalog is
+# specific to each Jira instance and is never published (generate it locally, or take the CI
+# artifact of a private repository). No Jira secret is used here.
 name: release
 
 on:
@@ -21,14 +22,19 @@ jobs:
     timeout-minutes: 15
     permissions:
       contents: write # create the release and upload its assets
+      packages: write # publish to npm.pkg.github.com
     steps:
       - uses: actions/checkout@v4
         with:
           persist-credentials: false
+      # registry-url and scope write a user-level .npmrc that reads NODE_AUTH_TOKEN for the
+      # @agrica scope; the project .npmrc holds no credential.
       - uses: actions/setup-node@v4
         with:
           node-version: '24.11'
           cache: npm
+          registry-url: https://npm.pkg.github.com
+          scope: '@agrica'
 
       - name: Check that the tag matches package.json
         run: |
@@ -38,17 +44,50 @@ jobs:
             exit 1
           fi
 
+      # GitHub Packages only accepts a scope equal to the repository owner; otherwise the
+      # upload fails with an opaque 403.
+      - name: Check that the package scope matches the repository owner
+        run: |
+          scope="$(node -p "require('./package.json').name.split('/')[0].replace('@', '')")"
+          owner="$(echo "$GITHUB_REPOSITORY_OWNER" | tr '[:upper:]' '[:lower:]')"
+          if [ "$scope" != "$owner" ]; then
+            echo "::error::package scope @$scope does not match repository owner $owner"
+            exit 1
+          fi
+
       - run: npm ci
       - run: npm run check
+
+      # package.json is "private" so that a local `npm publish` cannot ship a package holding the
+      # catalog of an instance. Only this job, which never generates a catalog, lifts it.
+      - name: Allow publication of this package
+        run: npm pkg delete private
 
       - name: Pack (clean build, no catalog)
         run: npm run package
 
       - name: Check the package (expected files, no secret)
-        run: node scripts/check-package.ts --no-catalog jira-api2-mcp-*.tgz
+        run: node scripts/check-package.ts --no-catalog agrica-jira-api2-mcp-*.tgz
+
+      - name: Check that the package holds no catalog
+        run: |
+          if tar -tzf agrica-jira-api2-mcp-*.tgz | grep -qx 'package/catalog/catalog.json'; then
+            echo "::error::the package holds an instance catalog; it must never be published"
+            exit 1
+          fi
 
       - name: Checksums
-        run: sha256sum jira-api2-mcp-*.tgz > SHA256SUMS.txt
+        run: sha256sum agrica-jira-api2-mcp-*.tgz > SHA256SUMS.txt
+
+      # The tarball checked above is the one published. A pre-release (tag containing "-") gets
+      # the dist-tag "next", so that `npm install` keeps resolving the latest stable version.
+      - name: Publish to GitHub Packages
+        env:
+          NODE_AUTH_TOKEN: ${{ github.token }}
+        run: |
+          dist_tag="latest"
+          case "$GITHUB_REF_NAME" in *-*) dist_tag="next" ;; esac
+          npm publish agrica-jira-api2-mcp-*.tgz --tag "$dist_tag"
 
       - name: Create the GitHub release
         env:
@@ -56,5 +95,5 @@ jobs:
         run: |
           prerelease=""
           case "$GITHUB_REF_NAME" in *-*) prerelease="--prerelease" ;; esac
-          gh release create "$GITHUB_REF_NAME" jira-api2-mcp-*.tgz SHA256SUMS.txt \
+          gh release create "$GITHUB_REF_NAME" agrica-jira-api2-mcp-*.tgz SHA256SUMS.txt \
             --title "jira-api2-mcp $GITHUB_REF_NAME" --generate-notes --verify-tag $prerelease

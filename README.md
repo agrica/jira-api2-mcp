@@ -55,16 +55,16 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 
 ## Installation
 
-Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Trois façons d'obtenir un serveur prêt à l'emploi :
+Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Quatre façons d'obtenir un serveur prêt à l'emploi :
 
 ### A. Depuis le paquet produit par la CI
 
 Si le dépôt publie le paquet (voir « CI »), il contient déjà `dist/` et le catalogue de votre instance.
 
-1. Téléchargez l'artefact `jira-api2-mcp-package` depuis l'exécution du workflow, ou avec `gh run download <run-id> -n jira-api2-mcp-package`. Il contient `jira-api2-mcp-<version>.tgz`.
+1. Téléchargez l'artefact `jira-api2-mcp-package` depuis l'exécution du workflow, ou avec `gh run download <run-id> -n jira-api2-mcp-package`. Il contient `agrica-jira-api2-mcp-<version>.tgz`.
 2. Décompressez le paquet et installez ses dépendances de production :
    ```bash
-   tar -xzf jira-api2-mcp-<version>.tgz        # crée le dossier package/
+   tar -xzf agrica-jira-api2-mcp-<version>.tgz # crée le dossier package/
    cd package
    npm install --omit=dev
    npm audit --omit=dev
@@ -75,20 +75,37 @@ On utilise `npm install` et non `npm ci`, parce qu'un paquet produit par `npm pa
 
 ### B. Depuis une release GitHub (paquet générique)
 
-Chaque version publiée (voir « Versions et dépendances ») joint à sa release GitHub le paquet `jira-api2-mcp-<version>.tgz` et un fichier `SHA256SUMS.txt`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
+Chaque version publiée (voir « Versions et dépendances ») joint à sa release GitHub le paquet `agrica-jira-api2-mcp-<version>.tgz` et un fichier `SHA256SUMS.txt`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
 
-1. Téléchargez les deux fichiers depuis la page _Releases_ du dépôt, ou avec `gh release download v<version> -p 'jira-api2-mcp-*.tgz' -p SHA256SUMS.txt`.
+1. Téléchargez les deux fichiers depuis la page _Releases_ du dépôt, ou avec `gh release download v<version> -p 'agrica-jira-api2-mcp-*.tgz' -p SHA256SUMS.txt`.
 2. Vérifiez l'empreinte, puis installez :
    ```bash
    sha256sum -c SHA256SUMS.txt
-   tar -xzf jira-api2-mcp-<version>.tgz        # crée le dossier package/
+   tar -xzf agrica-jira-api2-mcp-<version>.tgz # crée le dossier package/
    cd package
    npm install --omit=dev
    npm audit --omit=dev
    ```
-3. Fournissez le catalogue de votre instance : générez-le depuis les sources (méthode C, étapes `catalog:*`) puis copiez `catalog/catalog.json` dans `package/catalog/`, ou indiquez son emplacement avec `JIRA_CATALOG_PATH`.
+3. Fournissez le catalogue de votre instance : générez-le depuis les sources (méthode D, étapes `catalog:*`) puis copiez `catalog/catalog.json` dans `package/catalog/`, ou indiquez son emplacement avec `JIRA_CATALOG_PATH`.
 
-### C. Depuis les sources
+### C. Depuis GitHub Packages (registre npm)
+
+Chaque version publiée est aussi sur le registre npm de GitHub, sous le nom `@agrica/jira-api2-mcp`. C'est le même paquet **générique** que celui de la release : sans catalogue.
+
+1. GitHub Packages exige un jeton, même pour lire. Créez un _personal access token_ avec le droit `read:packages`, puis ajoutez-le à votre `~/.npmrc` **utilisateur** (jamais à un fichier versionné) :
+   ```
+   @agrica:registry=https://npm.pkg.github.com
+   //npm.pkg.github.com/:_authToken=VOTRE_JETON_GITHUB
+   ```
+2. Installez la commande :
+   ```bash
+   npm install -g @agrica/jira-api2-mcp           # ou @agrica/jira-api2-mcp@<version>
+   ```
+3. Générez le catalogue de votre instance depuis les sources (méthode D, étapes `catalog:*`) et indiquez son emplacement avec `JIRA_CATALOG_PATH`. La commande installée s'appelle `jira-api2-mcp` ; pour une autorité de certification privée, définissez `NODE_OPTIONS=--use-system-ca` (voir « Prérequis »).
+
+Les pré-versions (`v1.2.0-rc.1`, par exemple) sont publiées sous l'étiquette `next` : `npm install -g @agrica/jira-api2-mcp@next`.
+
+### D. Depuis les sources
 
 Le PAT n'est utilisé qu'en lecture pour télécharger les WADL.
 
@@ -458,30 +475,33 @@ Ces pull requests n'exécutent que le job `static` (format, lint, types, tests, 
 3. Le workflow `release`, déclenché par le tag `v*.*.*` :
    - vérifie que le tag correspond à la version de `package.json` ;
    - relance `npm run check` ;
-   - crée le paquet avec `npm run package` et le contrôle (`check-package --no-catalog`) ;
+   - retire `"private": true` de `package.json`, crée le paquet avec `npm run package` et le contrôle (`check-package --no-catalog`, absence de catalogue) ;
+   - publie ce paquet sur GitHub Packages (`@agrica/jira-api2-mcp`, étiquette `latest`, ou `next` pour une pré-version) ;
    - publie la release GitHub avec le paquet, `SHA256SUMS.txt` et des notes générées à partir des pull requests. Un tag contenant `-` (par exemple `v1.2.0-rc.1`) produit une _pre-release_.
 
-Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec le droit `contents: write`. La release ne contient **jamais** de catalogue ni d'information sur une instance.
+Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec les droits `contents: write` et `packages: write`. Ni la release ni le paquet publié ne contiennent **jamais** de catalogue ou d'information sur une instance.
+
+`package.json` reste marqué `"private": true` dans le dépôt : un `npm publish` lancé depuis un poste, où un catalogue a pu être généré, est refusé. Seul le workflow `release`, qui ne génère jamais de catalogue, lève cette protection.
 
 ## Développement
 
-| Commande                                           | Effet                                                                                 |
-| -------------------------------------------------- | ------------------------------------------------------------------------------------- |
-| `npm run dev`                                      | lance le serveur depuis les sources, avec rechargement                                |
-| `npm run build` / `npm start`                      | vide puis recompile `dist/` / lance le serveur compilé                                |
-| `npm run clean`                                    | supprime `dist/`                                                                      |
-| `npm run package`                                  | recompile `dist/` puis crée le paquet `jira-api2-mcp-<version>.tgz` (voir ci-dessous) |
-| `npm test` / `npm run test:watch`                  | tests (sans Jira ni catalogue généré), une fois / en continu                          |
-| `npm run coverage`                                 | tests avec couverture (seuils : 90 % lignes, fonctions, instructions ; 85 % branches) |
-| `npm run format` / `npm run format:check`          | met en forme / vérifie la mise en forme (oxfmt)                                       |
-| `npm run lint` / `npm run typecheck`               | oxlint / contrôle des types                                                           |
-| `npm run secrets:scan`                             | cherche des secrets dans les fichiers suivis et non ignorés par git                   |
-| `npm run check`                                    | format, lint, types, couverture, recherche de secrets                                 |
-| `npm run verify`                                   | `check` + `catalog:check`                                                             |
-| `npm run smoke`                                    | test de fumée réel en lecture seule (après `npm run build` ; `SMOKE_PROJECT` requis)  |
-| `npm run catalog:fetch`, `build`, `check`, `drift` | catalogue : voir « Installation » et « Catalogue et revue »                           |
+| Commande                                           | Effet                                                                                        |
+| -------------------------------------------------- | -------------------------------------------------------------------------------------------- |
+| `npm run dev`                                      | lance le serveur depuis les sources, avec rechargement                                       |
+| `npm run build` / `npm start`                      | vide puis recompile `dist/` / lance le serveur compilé                                       |
+| `npm run clean`                                    | supprime `dist/`                                                                             |
+| `npm run package`                                  | recompile `dist/` puis crée le paquet `agrica-jira-api2-mcp-<version>.tgz` (voir ci-dessous) |
+| `npm test` / `npm run test:watch`                  | tests (sans Jira ni catalogue généré), une fois / en continu                                 |
+| `npm run coverage`                                 | tests avec couverture (seuils : 90 % lignes, fonctions, instructions ; 85 % branches)        |
+| `npm run format` / `npm run format:check`          | met en forme / vérifie la mise en forme (oxfmt)                                              |
+| `npm run lint` / `npm run typecheck`               | oxlint / contrôle des types                                                                  |
+| `npm run secrets:scan`                             | cherche des secrets dans les fichiers suivis et non ignorés par git                          |
+| `npm run check`                                    | format, lint, types, couverture, recherche de secrets                                        |
+| `npm run verify`                                   | `check` + `catalog:check`                                                                    |
+| `npm run smoke`                                    | test de fumée réel en lecture seule (après `npm run build` ; `SMOKE_PROJECT` requis)         |
+| `npm run catalog:fetch`, `build`, `check`, `drift` | catalogue : voir « Installation » et « Catalogue et revue »                                  |
 
-**Paquet local.** `.npmrc` contient `ignore-scripts=true` (aucun script de dépendance ne s'exécute à l'installation) ; un simple `npm pack` saute donc le script `prepack` et emballerait `dist/` tel quel, éventuellement périmé. Utilisez `npm run package`, qui lance `npm pack --ignore-scripts=false` : `prepack` recompile alors `dist/` à partir de zéro. Sans catalogue généré, contrôlez le paquet avec `node scripts/check-package.ts --no-catalog jira-api2-mcp-<version>.tgz` (la CI, elle, exige le catalogue).
+**Paquet local.** `.npmrc` contient `ignore-scripts=true` (aucun script de dépendance ne s'exécute à l'installation) ; un simple `npm pack` saute donc le script `prepack` et emballerait `dist/` tel quel, éventuellement périmé. Utilisez `npm run package`, qui lance `npm pack --ignore-scripts=false` : `prepack` recompile alors `dist/` à partir de zéro. Sans catalogue généré, contrôlez le paquet avec `node scripts/check-package.ts --no-catalog agrica-jira-api2-mcp-<version>.tgz` (la CI, elle, exige le catalogue).
 
 **Règle d'or :** stdout est le canal MCP. N'utilisez jamais `console.log` (oxlint le refuse).
 

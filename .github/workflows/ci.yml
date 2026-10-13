@@ -93,7 +93,7 @@ jobs:
         env:
           JIRA_BASE_URL: ${{ secrets.JIRA_BASE_URL }}
           JIRA_PAT: ${{ secrets.JIRA_READONLY_PAT }}
-        run: node scripts/check-package.ts jira-api2-mcp-*.tgz
+        run: node scripts/check-package.ts agrica-jira-api2-mcp-*.tgz
 
       # Anyone with read access to the repository can download artifacts: private or internal repositories only.
       - name: Keep the package
@@ -101,11 +101,11 @@ jobs:
         uses: actions/upload-artifact@v4
         with:
           name: jira-api2-mcp-package
-          path: jira-api2-mcp-*.tgz
+          path: agrica-jira-api2-mcp-*.tgz
           retention-days: 14
           if-no-files-found: error
 
       # Matters on self-hosted runners, whose workspace persists between jobs.
       - name: Remove the endpoint inventory from the workspace
         if: always()
-        run: rm -rf catalog/wadl catalog/catalog.json catalog/last-diff.md catalog/review.md catalog/lock-baseline.json dist jira-api2-mcp-*.tgz
+        run: rm -rf catalog/wadl catalog/catalog.json catalog/last-diff.md catalog/review.md catalog/lock-baseline.json dist agrica-jira-api2-mcp-*.tgz

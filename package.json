@@ -1,8 +1,12 @@
 {
-  "name": "jira-api2-mcp",
+  "name": "@agrica/jira-api2-mcp",
   "version": "0.1.0",
   "private": true,
   "description": "Generic MCP server for Jira Server / Data Center 8.x (REST API v2)",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/agrica/jira-api2-mcp.git"
+  },
   "bin": {
     "jira-api2-mcp": "./dist/index.js"
   },
@@ -11,6 +15,9 @@
     "catalog/catalog.json"
   ],
   "type": "module",
+  "publishConfig": {
+    "registry": "https://npm.pkg.github.com"
+  },
   "scripts": {
     "clean": "node -e \"fs.rmSync('dist',{recursive:true,force:true})\"",
     "build": "npm run clean && tsc -p tsconfig.build.json",
