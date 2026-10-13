@@ -24,12 +24,12 @@ jobs:
       contents: write # create the release
       packages: write # publish to npm.pkg.github.com
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v7
         with:
           persist-credentials: false
       # registry-url and scope write a user-level .npmrc that reads NODE_AUTH_TOKEN for the
       # @agrica scope; the project .npmrc holds no credential.
-      - uses: actions/setup-node@v4
+      - uses: actions/setup-node@v7
         with:
           node-version: '24.11'
           cache: npm
