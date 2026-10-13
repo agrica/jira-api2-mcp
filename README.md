@@ -185,7 +185,47 @@ node --use-system-ca /chemin/vers/jira-api2-mcp/dist/index.js
 
 Ne mettez **jamais le PAT en clair** dans un fichier de configuration versionné ou dans une ligne de commande (historique du shell) : passez-le par l'environnement.
 
-### Claude Code (fichier `.mcp.json`)
+### Claude Code
+
+La procédure suppose le paquet installé depuis GitHub Packages (méthode B). Depuis les sources (méthode C), remplacez le chemin du serveur par `/chemin/vers/jira-api2-mcp/dist/index.js` et omettez `JIRA_CATALOG_PATH` : le catalogue est alors trouvé dans `catalog/`.
+
+**1. Préparer le poste**
+
+- Installez le paquet (méthode B) et générez le catalogue de votre instance (méthode C, étapes `catalog:*`). Copiez `catalog/catalog.json` à un emplacement stable, hors du dossier d'installation que `npm install -g` remplace à chaque mise à jour : par exemple `~/.config/jira-api2-mcp/catalog.json`, ou `C:/outils/jira-api2-mcp/catalog.json`.
+- Repérez le chemin du serveur installé : `npm root -g` donne le dossier des paquets globaux, et le serveur est `<ce dossier>/@agrica/jira-api2-mcp/dist/index.js`.
+- Placez le PAT Jira dans une variable d'environnement **utilisateur**, jamais dans un fichier ni sur une ligne de commande. Sous Windows, sans laisser le jeton dans l'historique :
+  ```powershell
+  [Environment]::SetEnvironmentVariable('JIRA_PAT', (Read-Host -MaskInput 'PAT Jira'), 'User')
+  ```
+  Sous Linux ou macOS, ajoutez `export JIRA_PAT=…` à un fichier de profil lisible par vous seul. Relancez ensuite le terminal et Claude Code pour qu'ils voient la variable.
+
+**2. Enregistrer le serveur (ligne de commande)**
+
+`--scope user` rend le serveur disponible dans tous vos projets. Sans cette option, il ne l'est que dans le projet courant (`local`).
+
+bash :
+
+```bash
+claude mcp add jira --scope user \
+  -e JIRA_BASE_URL=https://jira.example.com \
+  -e JIRA_CATALOG_PATH="$HOME/.config/jira-api2-mcp/catalog.json" \
+  -e JIRA_ALLOW_WRITES=false \
+  -- node --use-system-ca "$(npm root -g)/@agrica/jira-api2-mcp/dist/index.js"
+```
+
+PowerShell :
+
+```powershell
+claude mcp add jira --scope user `
+  -e JIRA_BASE_URL=https://jira.example.com `
+  -e JIRA_CATALOG_PATH=C:/outils/jira-api2-mcp/catalog.json `
+  -e JIRA_ALLOW_WRITES=false `
+  -- node --use-system-ca "$(npm root -g)/@agrica/jira-api2-mcp/dist/index.js"
+```
+
+Le PAT n'apparaît pas dans la commande : le serveur hérite de `JIRA_PAT` depuis l'environnement de Claude Code. Si un serveur porte déjà le nom `jira`, choisissez-en un autre (`jira-api2`, par exemple) ou supprimez l'ancien avec `claude mcp remove jira --scope user`.
+
+**Ou bien : fichier `.mcp.json` (portée projet)**
 
 1. Copiez `.mcp.json.example` en `.mcp.json` à la racine de votre projet (ce fichier est ignoré par git dans ce dépôt ; ajoutez-le aussi au `.gitignore` de votre projet).
 2. Adaptez le chemin et l'URL :
@@ -194,10 +234,14 @@ Ne mettez **jamais le PAT en clair** dans un fichier de configuration versionné
      "mcpServers": {
        "jira": {
          "command": "node",
-         "args": ["--use-system-ca", "/chemin/vers/jira-api2-mcp/dist/index.js"],
+         "args": [
+           "--use-system-ca",
+           "/chemin/vers/node_modules/@agrica/jira-api2-mcp/dist/index.js"
+         ],
          "env": {
            "JIRA_BASE_URL": "https://jira.example.com",
            "JIRA_PAT": "${JIRA_PAT}",
+           "JIRA_CATALOG_PATH": "/chemin/vers/catalog.json",
            "JIRA_ALLOW_WRITES": "false",
            "JIRA_ENABLE_XRAY": "false"
          }
@@ -205,21 +249,19 @@ Ne mettez **jamais le PAT en clair** dans un fichier de configuration versionné
      }
    }
    ```
-   `${JIRA_PAT}` est remplacé par Claude Code à partir de votre environnement.
-3. Définissez `JIRA_PAT` dans l'environnement qui lance Claude Code, puis vérifiez avec `/mcp` que le serveur `jira` est connecté.
+   Claude Code remplace `${JIRA_PAT}` par la variable d'environnement du même nom. Si votre PAT est déjà dans une variable portant un autre nom, utilisez ce nom, par exemple `"JIRA_PAT": "${USER_TOKEN_JIRA}"`.
 
-Sous Windows, utilisez un chemin avec des barres obliques ou des antislashs doublés, par exemple `"C:/outils/jira-api2-mcp/dist/index.js"`.
+Sous Windows, écrivez les chemins avec des barres obliques ou des antislashs doublés, par exemple `"C:/outils/npm/node_modules/@agrica/jira-api2-mcp/dist/index.js"`.
 
-### Claude Code (ligne de commande)
+**3. Vérifier**
 
-```bash
-claude mcp add jira \
-  -e JIRA_BASE_URL=https://jira.example.com \
-  -e JIRA_ALLOW_WRITES=false \
-  -- node --use-system-ca /chemin/vers/jira-api2-mcp/dist/index.js
-```
+- `claude mcp list` affiche le serveur et son état ; dans une session, `/mcp` doit le montrer connecté.
+- Au démarrage, le serveur écrit sur stderr une ligne `[jira-api2-mcp] ready (read-only; …; catalog: N operations from Jira x.y.z, …)`. En cas d'échec, `/mcp` donne le message d'erreur (voir « Dépannage »).
+- Demandez par exemple « qui suis-je dans Jira ? » : Claude appelle `jira_get_current_user`.
 
-Le PAT n'est pas passé ici : il est hérité de l'environnement qui lance Claude Code.
+**Autorité de certification d'entreprise.** Si la connexion échoue avec `UNABLE_TO_GET_ISSUER_CERT` alors que `--use-system-ca` est présent, l'autorité n'est pas dans le magasin du système : retirez `--use-system-ca` et ajoutez `-e NODE_EXTRA_CA_CERTS=/chemin/vers/ca.pem`, ou `"NODE_EXTRA_CA_CERTS"` dans `env`.
+
+**Mettre à jour.** `npm install -g @agrica/jira-api2-mcp@latest`, puis relancez Claude Code. Le chemin du serveur ne change pas. Après une mise à jour de Jira ou d'un plugin, régénérez le catalogue (« Catalogue et revue ») et recopiez-le à son emplacement.
 
 ### Autres clients MCP
 
