@@ -1,6 +1,6 @@
 {
   "name": "@agrica/jira-api2-mcp",
-  "version": "0.1.0",
+  "version": "0.1.1",
   "private": true,
   "description": "Generic MCP server for Jira Server / Data Center 8.x (REST API v2)",
   "repository": {
