@@ -11,10 +11,9 @@ coverage/
 # notes locales de travail (outillage)
 .superpowers/
 
-# Inventaire des endpoints de l'instance : non versionné (mode B ; les WADL contiennent l'URL de l'instance).
-# Mode A (versionner l'inventaire, si le responsable du dépôt l'autorise) : supprimer les cinq lignes suivantes.
+# Sources et rapports de l'inventaire des endpoints : non versionnés (les WADL contiennent l'URL de
+# l'instance). catalog/catalog.json est versionné, pour que la release l'embarque dans le paquet.
 catalog/wadl/
-catalog/catalog.json
 catalog/last-diff.md
 catalog/review.md
 catalog/lock-baseline.json

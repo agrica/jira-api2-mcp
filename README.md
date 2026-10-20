@@ -55,7 +55,7 @@ Serveur MCP (stdio) générique pour **Jira Software Server / Data Center 8.x** 
 
 ## Installation
 
-Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est propre à chaque instance et **n'est pas dans git**. Trois façons d'obtenir un serveur prêt à l'emploi :
+Le serveur a besoin d'un **catalogue des opérations** (`catalog/catalog.json`). Il est généré depuis les WADL de l'instance AGRICA, **versionné** dans git et inclus dans le paquet publié. Trois façons d'obtenir un serveur prêt à l'emploi :
 
 ### A. Depuis le paquet produit par la CI
 
@@ -75,7 +75,7 @@ On utilise `npm install` et non `npm ci`, parce qu'un paquet produit par `npm pa
 
 ### B. Depuis le registre npm de GitHub (GitHub Packages)
 
-Chaque version publiée (voir « Versions et dépendances ») est sur le registre npm de GitHub, sous le nom `@agrica/jira-api2-mcp`. Ce paquet est **générique** : il ne contient **pas** de catalogue, qui est propre à chaque instance et n'est jamais publié.
+Chaque version publiée (voir « Versions et dépendances ») est sur le registre npm de GitHub, sous le nom `@agrica/jira-api2-mcp`. Ce paquet contient le catalogue versionné (`catalog/catalog.json`) : aucun `JIRA_CATALOG_PATH` n'est nécessaire.
 
 1. GitHub Packages exige un jeton, même pour lire un paquet. Créez un _personal access token_ avec le droit `read:packages`, puis ajoutez-le à votre `~/.npmrc` **utilisateur** (jamais à un fichier versionné) :
    ```
@@ -88,8 +88,7 @@ Chaque version publiée (voir « Versions et dépendances ») est sur le registr
    npm install -g @agrica/jira-api2-mcp@<version>  # version précise
    ```
    Les pré-versions (`1.2.0-rc.1`, par exemple) sont publiées sous l'étiquette `next` : `npm install -g @agrica/jira-api2-mcp@next`.
-3. Générez le catalogue de votre instance depuis les sources (méthode C, étapes `catalog:*`) et indiquez son emplacement avec `JIRA_CATALOG_PATH`.
-4. Le serveur installé se trouve dans `$(npm root -g)/@agrica/jira-api2-mcp/dist/index.js` : c'est le chemin à donner à `node --use-system-ca` (voir « Brancher le serveur sur un client MCP »). La commande `jira-api2-mcp` est aussi disponible ; pour une autorité de certification privée, elle demande `NODE_OPTIONS=--use-system-ca` (voir « Prérequis »).
+3. Le serveur installé se trouve dans `$(npm root -g)/@agrica/jira-api2-mcp/dist/index.js` : c'est le chemin à donner à `node --use-system-ca` (voir « Brancher le serveur sur un client MCP »). La commande `jira-api2-mcp` est aussi disponible ; pour une autorité de certification privée, elle demande `NODE_OPTIONS=--use-system-ca` (voir « Prérequis »).
 
 Mettre à jour : `npm install -g @agrica/jira-api2-mcp@latest`.
 
@@ -187,11 +186,11 @@ Ne mettez **jamais le PAT en clair** dans un fichier de configuration versionné
 
 ### Claude Code
 
-La procédure suppose le paquet installé depuis GitHub Packages (méthode B). Depuis les sources (méthode C), remplacez le chemin du serveur par `/chemin/vers/jira-api2-mcp/dist/index.js` et omettez `JIRA_CATALOG_PATH` : le catalogue est alors trouvé dans `catalog/`.
+La procédure suppose le paquet installé depuis GitHub Packages (méthode B). Depuis les sources (méthode C), remplacez le chemin du serveur par `/chemin/vers/jira-api2-mcp/dist/index.js`. Dans les deux cas, le catalogue est trouvé dans `catalog/` : `JIRA_CATALOG_PATH` ne sert qu'à en utiliser un autre.
 
 **1. Préparer le poste**
 
-- Installez le paquet (méthode B) et générez le catalogue de votre instance (méthode C, étapes `catalog:*`). Copiez `catalog/catalog.json` à un emplacement stable, hors du dossier d'installation que `npm install -g` remplace à chaque mise à jour : par exemple `~/.config/jira-api2-mcp/catalog.json`, ou `C:/outils/jira-api2-mcp/catalog.json`.
+- Installez le paquet (méthode B) : il contient le catalogue.
 - Repérez le chemin du serveur installé : `npm root -g` donne le dossier des paquets globaux, et le serveur est `<ce dossier>/@agrica/jira-api2-mcp/dist/index.js`.
 - Placez le PAT Jira dans une variable d'environnement **utilisateur**, jamais dans un fichier ni sur une ligne de commande. Sous Windows, sans laisser le jeton dans l'historique :
   ```powershell
@@ -208,7 +207,6 @@ bash :
 ```bash
 claude mcp add jira --scope user \
   -e JIRA_BASE_URL=https://jira.example.com \
-  -e JIRA_CATALOG_PATH="$HOME/.config/jira-api2-mcp/catalog.json" \
   -e JIRA_ALLOW_WRITES=false \
   -- node --use-system-ca "$(npm root -g)/@agrica/jira-api2-mcp/dist/index.js"
 ```
@@ -218,7 +216,6 @@ PowerShell :
 ```powershell
 claude mcp add jira --scope user `
   -e JIRA_BASE_URL=https://jira.example.com `
-  -e JIRA_CATALOG_PATH=C:/outils/jira-api2-mcp/catalog.json `
   -e JIRA_ALLOW_WRITES=false `
   -- node --use-system-ca "$(npm root -g)/@agrica/jira-api2-mcp/dist/index.js"
 ```
@@ -241,7 +238,6 @@ Le PAT n'apparaît pas dans la commande : le serveur hérite de `JIRA_PAT` depui
          "env": {
            "JIRA_BASE_URL": "https://jira.example.com",
            "JIRA_PAT": "${JIRA_PAT}",
-           "JIRA_CATALOG_PATH": "/chemin/vers/catalog.json",
            "JIRA_ALLOW_WRITES": "false",
            "JIRA_ENABLE_XRAY": "false"
          }
@@ -415,7 +411,7 @@ Exemple :
 - **Secrets et inventaire.**
   - Le PAT n'est jamais journalisé ni versionné (`npm run secrets:scan`, qui cherche aussi l'hôte de l'instance quand `JIRA_BASE_URL` est défini). Il n'apparaît pas non plus dans les erreurs renvoyées au modèle, même quand une page de proxy le renvoie ; le nom d'hôte de l'instance, les adresses IP et les noms de certificat en sont aussi retirés.
   - L'URL de l'instance n'est pas journalisée au démarrage ; les scripts qui appellent Jira n'affichent qu'une ligne d'erreur nettoyée (sans hôte, adresse IP ni détail de certificat).
-  - L'inventaire des endpoints (WADL, `catalog/catalog.json`, rapports) **n'est pas versionné**.
+  - Les WADL et les rapports de l'inventaire ne sont pas versionnés (les WADL contiennent l'URL de l'instance). Le catalogue `catalog/catalog.json` l'est, pour être inclus dans le paquet : il ne contient ni URL d'instance ni PAT, mais il révèle la version de Jira et la liste de ses opérations REST.
 
 ## Catalogue et revue
 
@@ -505,11 +501,11 @@ Ces pull requests n'exécutent que le job `static` (format, lint, types, tests, 
 3. Le workflow `release`, déclenché par le tag `v*.*.*` :
    - vérifie que le tag correspond à la version de `package.json` ;
    - relance `npm run check` ;
-   - retire `"private": true` de `package.json`, crée le paquet avec `npm run package` et le contrôle (`check-package --no-catalog`, absence de catalogue) ;
+   - retire `"private": true` de `package.json`, crée le paquet avec `npm run package` et le contrôle (`check-package` : fichiers attendus, catalogue présent et accepté par le serveur, aucun secret) ;
    - publie ce paquet sur GitHub Packages (`@agrica/jira-api2-mcp`, étiquette `latest`, ou `next` pour une pré-version) ;
    - crée la release GitHub, avec des notes générées à partir des pull requests et sans fichier joint : le paquet s'installe depuis GitHub Packages (méthode B). Un tag contenant `-` (par exemple `v1.2.0-rc.1`) produit une _pre-release_.
 
-Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec les droits `contents: write` et `packages: write`. Le paquet publié ne contient **jamais** de catalogue ou d'information sur une instance.
+Le workflow n'utilise aucun secret Jira, seulement le jeton GitHub avec les droits `contents: write` et `packages: write`. Le paquet publié contient le catalogue versionné, tel qu'il est dans le commit du tag : régénérez-le (`catalog:fetch`, `catalog:build`) et commitez-le avant de publier une version.
 
 `package.json` reste marqué `"private": true` dans le dépôt : un `npm publish` lancé depuis un poste, où un catalogue a pu être généré, est refusé. Seul le workflow `release`, qui ne génère jamais de catalogue, lève cette protection.
 

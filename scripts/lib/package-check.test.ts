@@ -1,4 +1,5 @@
 import { describe, expect, it } from 'vitest';
+import { FIXTURE_CATALOG } from '../../src/test-support/catalog-fixture.ts';
 import {
   containsLiteral,
   missingEntries,
@@ -72,7 +73,7 @@ const files = (overrides: Record<string, string | undefined> = {}) => {
     'package/README.md': '# jira-api2-mcp',
     'package/dist/index.js': '#!/usr/bin/env node\nimport "./server.js";\n',
     'package/dist/catalog/load.js': 'export {};',
-    'package/catalog/catalog.json': '{}',
+    'package/catalog/catalog.json': JSON.stringify(FIXTURE_CATALOG),
   };
   return Object.entries({ ...base, ...overrides }).map(([path, text]) => ({ path, text }));
 };
@@ -89,6 +90,18 @@ describe('packageProblems', () => {
       'missing file: package/catalog/catalog.json',
       'unexpected file: package/.env',
       'package/README.md: unreadable',
+    ]);
+  });
+
+  it('rejects a catalog the server would refuse at startup', () => {
+    const problem = (text: string) =>
+      packageProblems(files({ 'package/catalog/catalog.json': text }), {
+        catalog: true,
+        literals: [],
+      });
+    expect(problem('{oops')).toEqual(['package/catalog/catalog.json: not valid JSON']);
+    expect(problem('{}')).toEqual([
+      expect.stringMatching(/^package\/catalog\/catalog\.json is invalid: meta: /),
     ]);
   });
 

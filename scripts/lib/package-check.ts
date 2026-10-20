@@ -1,3 +1,4 @@
+import { parseCatalog } from '../../src/catalog/load.ts';
 import { boundedPattern } from '../../src/util/redact.ts';
 import { findSecrets } from './secret-scan.ts';
 
@@ -49,6 +50,22 @@ export interface PackedFile {
   text: string | undefined;
 }
 
+/** The shipped catalog must pass the schema the server applies at startup. */
+function catalogProblems(text: string): string[] {
+  let json: unknown;
+  try {
+    json = JSON.parse(text);
+  } catch {
+    return [`${CATALOG}: not valid JSON`];
+  }
+  try {
+    parseCatalog(json, CATALOG);
+    return [];
+  } catch (error) {
+    return [(error as Error).message];
+  }
+}
+
 /**
  * Everything wrong with a package, one line per problem. Only names of findings are given,
  * never the matched values.
@@ -69,6 +86,7 @@ export function packageProblems(
     }
     if (path === ENTRY_POINT && !text.startsWith(`${SHEBANG}\n`))
       problems.push(`${path}: missing the "${SHEBANG}" shebang`);
+    if (path === CATALOG) problems.push(...catalogProblems(text));
     const hits = findSecrets(text);
     if (containsLiteral(text, options.literals)) hits.push('sensitive environment value');
     if (hits.length > 0) problems.push(`${path}: ${hits.join(', ')}`);

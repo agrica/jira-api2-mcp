@@ -1,8 +1,8 @@
 # Publishes a version when its tag (vX.Y.Z, e.g. created by `npm version`) is pushed: the package
 # goes to GitHub Packages (npm registry) as @agrica/jira-api2-mcp, then a GitHub release records the
-# version with its notes and no attached file. The package is generic: the operation catalog is
-# specific to each Jira instance and is never published (generate it locally, or take the CI
-# artifact of a private repository). No Jira secret is used here.
+# version with its notes and no attached file. The package ships the versioned operation catalog
+# (catalog/catalog.json, regenerated locally with catalog:fetch and catalog:build), so that the
+# installed server needs no JIRA_CATALOG_PATH. No Jira secret is used here.
 name: release
 
 on:
@@ -58,23 +58,17 @@ jobs:
       - run: npm ci
       - run: npm run check
 
-      # package.json is "private" so that a local `npm publish` cannot ship a package holding the
-      # catalog of an instance. Only this job, which never generates a catalog, lifts it.
+      # package.json is "private" so that a local `npm publish` cannot ship a package built from a
+      # local, unchecked catalog. Only this job, which ships the versioned one, lifts it.
       - name: Allow publication of this package
         run: npm pkg delete private
 
-      - name: Pack (clean build, no catalog)
+      - name: Pack (clean build, versioned catalog)
         run: npm run package
 
-      - name: Check the package (expected files, no secret)
-        run: node scripts/check-package.ts --no-catalog agrica-jira-api2-mcp-*.tgz
-
-      - name: Check that the package holds no catalog
-        run: |
-          if tar -tzf agrica-jira-api2-mcp-*.tgz | grep -qx 'package/catalog/catalog.json'; then
-            echo "::error::the package holds an instance catalog; it must never be published"
-            exit 1
-          fi
+      # Fails if the catalog is missing or would be refused by the server at startup.
+      - name: Check the package (expected files, valid catalog, no secret)
+        run: node scripts/check-package.ts agrica-jira-api2-mcp-*.tgz
 
       # The tarball checked above is the one published. A pre-release (tag containing "-") gets
       # the dist-tag "next", so that `npm install` keeps resolving the latest stable version.

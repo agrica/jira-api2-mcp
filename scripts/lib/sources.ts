@@ -10,7 +10,7 @@ export const WADL_DIR = new URL('wadl/', CATALOG_DIR); //                  not v
 export const FETCH_META = new URL('wadl/fetch-meta.json', CATALOG_DIR); // not versioned (mode B)
 export const SOURCE_LOCK = new URL('source-lock.json', CATALOG_DIR); //    versioned
 export const DECISIONS = new URL('access-decisions.json', CATALOG_DIR); // versioned
-export const CATALOG_JSON = new URL('catalog.json', CATALOG_DIR); //       not versioned (mode B)
+export const CATALOG_JSON = new URL('catalog.json', CATALOG_DIR); //       versioned (shipped)
 export const LAST_DIFF = new URL('last-diff.md', CATALOG_DIR); //          not versioned (mode B)
 export const REVIEW_REPORT = new URL('review.md', CATALOG_DIR); //         not versioned (mode B)
 /** Operations of the last `--update-lock`: the reference of last-diff.md, kept across plain builds. */
