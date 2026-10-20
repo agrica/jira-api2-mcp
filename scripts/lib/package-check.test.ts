@@ -78,6 +78,13 @@ const files = (overrides: Record<string, string | undefined> = {}) => {
   return Object.entries({ ...base, ...overrides }).map(([path, text]) => ({ path, text }));
 };
 
+/** The problems of an otherwise clean package shipping this catalog text. */
+const problem = (text: string) =>
+  packageProblems(files({ 'package/catalog/catalog.json': text }), {
+    catalog: true,
+    literals: [],
+  });
+
 describe('packageProblems', () => {
   it('accepts a complete, clean package', () => {
     expect(packageProblems(files(), { catalog: true, literals: [] })).toEqual([]);
@@ -94,11 +101,6 @@ describe('packageProblems', () => {
   });
 
   it('rejects a catalog the server would refuse at startup', () => {
-    const problem = (text: string) =>
-      packageProblems(files({ 'package/catalog/catalog.json': text }), {
-        catalog: true,
-        literals: [],
-      });
     expect(problem('{oops')).toEqual(['package/catalog/catalog.json: not valid JSON']);
     expect(problem('{}')).toEqual([
       expect.stringMatching(/^package\/catalog\/catalog\.json is invalid: meta: /),
