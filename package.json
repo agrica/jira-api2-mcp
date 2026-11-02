@@ -42,7 +42,7 @@
     "dev": "node --use-system-ca --watch src/index.ts"
   },
   "dependencies": {
-    "@modelcontextprotocol/server": "2.3.1",
+    "@modelcontextprotocol/server": "2.4.0",
     "zod": "4.6.5"
   },
   "devDependencies": {
